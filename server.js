@@ -364,24 +364,26 @@ if (!process.env.ADMIN_TOKEN || token.trim() !== String(process.env.ADMIN_TOKEN)
       ""; // full logo as banner
 
     const patchBody = {
-      issuerName: "Odivelas Sports Club",
-      hexBackgroundColor: "#000000",
-      cardTitle: { defaultValue: { language: "pt-PT", value: "ODIVELAS SPORTS CLUB" } },
+  issuerName: "Odivelas Sports Club",
+  hexBackgroundColor: "#000000",
+  cardTitle: { defaultValue: { language: "pt-PT", value: "ODIVELAS SPORTS CLUB" } }
+};
 
-      logo: logoUri
-        ? {
-            sourceUri: { uri: logoUri },
-            contentDescription: { defaultValue: { language: "pt-PT", value: "OSC" } }
-          }
-        : undefined,
+if (logoUri) {
+  patchBody.logo = {
+    sourceUri: { uri: logoUri },
+    contentDescription: { defaultValue: { language: "pt-PT", value: "OSC" } }
+  };
+}
 
-      heroImage: heroUri
-        ? {
-            sourceUri: { uri: heroUri },
-            contentDescription: { defaultValue: { language: "pt-PT", value: "Odivelas Sports Club" } }
-          }
-        : undefined
-    };
+if (heroUri) {
+  patchBody.heroImage = {
+    sourceUri: { uri: heroUri },
+    contentDescription: { defaultValue: { language: "pt-PT", value: "Odivelas Sports Club" } }
+  };
+}
+
+console.log("Brand class patchBody =", JSON.stringify(patchBody));
 
     const r = await fetch(
       `https://walletobjects.googleapis.com/walletobjects/v1/genericClass/${encodeURIComponent(classId)}`,
