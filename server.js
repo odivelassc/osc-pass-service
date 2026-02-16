@@ -330,7 +330,7 @@ app.get("/c/:token", async (req, res) => {
 
 app.post("/admin/google-wallet/brand-class", async (req, res) => {
   try {
-    const token = req.headers["x-admin-token"];
+    const token = req.get["x-admin-token"];
     if (!process.env.ADMIN_TOKEN || token !== process.env.ADMIN_TOKEN) {
       return res.status(401).json({ error: "Unauthorized" });
     }
