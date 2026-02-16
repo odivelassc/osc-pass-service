@@ -423,5 +423,28 @@ app.post("/admin/google-wallet/brand-class", async (req, res) => {
   }
 });
 
+app.get("/admin/google-wallet/get-class", async (req, res) => {
+  try {
+    const token = (req.get("x-admin-token") || "").trim();
+    if (!process.env.ADMIN_TOKEN || token !== String(process.env.ADMIN_TOKEN).trim()) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const issuerId = process.env.GOOGLE_ISSUER_ID;
+    const classId = `${issuerId}.MembershipCard`;
+    const accessToken = await getGoogleAccessToken();
+
+    const r = await fetch(
+      `https://walletobjects.googleapis.com/walletobjects/v1/genericClass/${encodeURIComponent(classId)}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+
+    const txt = await r.text();
+    return res.status(r.status).send(txt);
+  } catch (e) {
+    res.status(500).json({ error: String(e.message || e) });
+  }
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`OSC Pass Service running on ${PORT}`));
