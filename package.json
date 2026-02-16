@@ -9,7 +9,10 @@
   },
   "dependencies": {
     "express": "^4.19.2",
+    "google-auth-library": "^9.0.0",
+    "jsonwebtoken": "^9.0.2",
     "qrcode": "^1.5.3",
+    "undici": "^6.19.8",
     "uuid": "^9.0.1"
   }
 }
