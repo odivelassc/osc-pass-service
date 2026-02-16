@@ -349,107 +349,79 @@ app.get("/admin/ping", (req, res) => {
 
 app.post("/admin/google-wallet/brand-class", async (req, res) => {
   try {
-    
-    const bearer = (req.get("authorization") || "").trim();
-const tokenFromBearer = bearer.toLowerCase().startsWith("bearer ")
-  ? bearer.slice(7).trim()
-  : "";
+    // ---- Auth: accept either Authorization: Bearer <token> OR x-admin-token: <token>
+    const auth = (req.get("authorization") || "").trim();
+    const tokenFromBearer = auth.toLowerCase().startsWith("bearer ")
+      ? auth.slice(7).trim()
+      : "";
 
-const token = tokenFromBearer || (req.get("x-admin-token") || "").trim();
+    const token = (tokenFromBearer || (req.get("x-admin-token") || "").trim()).trim();
+    const adminToken = (process.env.ADMIN_TOKEN || "").trim();
 
-if (!process.env.ADMIN_TOKEN || token !== String(process.env.ADMIN_TOKEN).trim()) {
-  return res.status(401).json({ error: "Unauthorized" });
-}
+    if (!adminToken || token !== adminToken) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
 
-    console.log("BRAND-CLASS HIT", {
-  hasAuth: !!req.get("authorization"),
-  auth: req.get("authorization"),
-  hasX: !!req.get("x-admin-token"),
-  envLen: process.env.ADMIN_TOKEN ? process.env.ADMIN_TOKEN.length : 0
-});
+    // ---- Required env
+    const issuerId = (process.env.GOOGLE_ISSUER_ID || "").trim();
+    if (!issuerId) return res.status(500).json({ error: "Missing GOOGLE_ISSUER_ID" });
 
-if (!process.env.ADMIN_TOKEN || token.trim() !== String(process.env.ADMIN_TOKEN).trim()) {
-  return res.status(401).json({ error: "Unauthorized" });
-}
-
-    const issuerId = process.env.GOOGLE_ISSUER_ID;
-    const classSuffix = "MembershipCard"; // this is your class name
+    const classSuffix = "MembershipCard";
     const classId = `${issuerId}.${classSuffix}`;
 
     const accessToken = await getGoogleAccessToken();
 
-    const logoUri = process.env.OSC_LOGO_URL || ""; // bear icon
-    const heroUri =
-      process.env.OSC_HERO_URL ||
-      process.env.OSC_FOOTER_LOGO_URL ||
-      ""; // full logo as banner
+    // ---- Branding assets
+    const logoUri = (process.env.OSC_LOGO_URL || "").trim();              // bear icon
+    const heroUri = (process.env.OSC_FOOTER_LOGO_URL || "").trim();       // bottom full logo (banner)
 
+    // ---- PATCH payload (non-empty)
     const patchBody = {
-  issuerName: "Odivelas Sports Club",
-  hexBackgroundColor: "#000000",
-  cardTitle: {
-    defaultValue: { language: "pt-PT", value: "ODIVELAS SPORTS CLUB" }
-  }
-};
-  console.log("PATCH BODY:", JSON.stringify(patchBody, null, 2));
+      issuerName: "Odivelas Sports Club",
+      hexBackgroundColor: "#000000",
+      cardTitle: {
+        defaultValue: { language: "pt-PT", value: "ODIVELAS SPORTS CLUB" },
+      },
+    };
 
-if (logoUri) {
-  patchBody.logo = {
-    sourceUri: { uri: logoUri },
-    contentDescription: { defaultValue: { language: "pt-PT", value: "OSC" } }
-  };
-}
+    if (logoUri) {
+      patchBody.logo = {
+        sourceUri: { uri: logoUri },
+        contentDescription: { defaultValue: { language: "pt-PT", value: "OSC" } },
+      };
+    }
 
-if (heroUri) {
-  patchBody.heroImage = {
-    sourceUri: { uri: heroUri },
-    contentDescription: { defaultValue: { language: "pt-PT", value: "Odivelas Sports Club" } }
-  };
-}
+    if (heroUri) {
+      patchBody.heroImage = {
+        sourceUri: { uri: heroUri },
+        contentDescription: { defaultValue: { language: "pt-PT", value: "Odivelas Sports Club" } },
+      };
+    }
 
-console.log("Brand class patchBody =", JSON.stringify(patchBody));
+    // IMPORTANT: send updateMask so Google knows what fields you’re patching
+    const updateMask = Object.keys(patchBody).join(",");
 
-    const r = await fetch(
-      `https://walletobjects.googleapis.com/walletobjects/v1/genericClass/${encodeURIComponent(classId)}`,
-      {
-        method: "PATCH",
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify(patchBody)
-      }
-    );
+    const url =
+      `https://walletobjects.googleapis.com/walletobjects/v1/genericClass/${encodeURIComponent(classId)}` +
+      `?updateMask=${encodeURIComponent(updateMask)}`;
+
+    const r = await fetch(url, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(patchBody),
+    });
 
     const txt = await r.text();
     if (!r.ok) return res.status(r.status).send(txt);
 
-    res.json({ ok: true, classId });
+    return res.json({ ok: true, classId, updateMask, patchBody });
   } catch (e) {
-    res.status(500).json({ error: String(e.message || e) });
+    return res.status(500).json({ error: String(e.message || e) });
   }
 });
-
-function computeValidationState(record) {
-  if (!record) return "NOT_FOUND";
-
-  const now = new Date();
-  const validUntil = record.valid_until ? new Date(record.valid_until) : null;
-
-  if (record.status !== "active") return "NOT_ACTIVE";
-  if (validUntil && now > validUntil) return "EXPIRED";
-  return "VALID";
-}
-
-function escapeHtml(str) {
-  return String(str).replace(/[&<>"']/g, (m) => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#039;"
-  }[m]));
-}
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`OSC Pass Service running on ${PORT}`));
