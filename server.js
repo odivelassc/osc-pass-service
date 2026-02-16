@@ -1,13 +1,95 @@
 const express = require("express");
 const { v4: uuidv4 } = require("uuid");
 const QRCode = require("qrcode");
+const fs = require("fs");
+const jwt = require("jsonwebtoken");
+const { GoogleAuth } = require("google-auth-library");
+const { fetch } = require("undici");
 
 const app = express();
 app.use(express.json());
 
 // Phase 1: in-memory store (we'll replace with a DB later)
 const store = new Map();
+async function getGoogleAccessToken() {
+  const auth = new GoogleAuth({
+    scopes: ["https://www.googleapis.com/auth/wallet_object.issuer"],
+  });
+  const client = await auth.getClient();
+  const t = await client.getAccessToken();
+  return t.token;
+}
 
+async function upsertGenericObject({ issuerId, classSuffix, objectSuffix, record }) {
+  const accessToken = await getGoogleAccessToken();
+  const classId = `${issuerId}.${classSuffix}`;
+  const objectId = `${issuerId}.${objectSuffix}`;
+
+  const url = `https://walletobjects.googleapis.com/walletobjects/v1/genericObject/${encodeURIComponent(objectId)}`;
+
+  const body = {
+    id: objectId,
+    classId,
+    state: record.status === "active" ? "ACTIVE" : "INACTIVE",
+    cardTitle: { defaultValue: { language: "pt-PT", value: "ODIVELAS SPORTS CLUB" } },
+    header: { defaultValue: { language: "pt-PT", value: record.full_name } },
+    subheader: { defaultValue: { language: "pt-PT", value: "Cartão de Sócio" } },
+    barcode: { type: "QR_CODE", value: record.qr_validation_url },
+    textModulesData: [
+      { id: "memberNumber", header: "Nº Sócio", body: record.member_number },
+      { id: "validUntil", header: "Válido até", body: record.valid_until || "—" }
+    ],
+    linksModuleData: {
+      uris: [{ uri: record.card_public_url, description: "Abrir cartão" }]
+    }
+  };
+
+  // Try PATCH (update). If 404 then create.
+  let r = await fetch(url, {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (r.status === 404) {
+    r = await fetch("https://walletobjects.googleapis.com/walletobjects/v1/genericObject", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+  }
+
+  // 409 means "already exists" for some operations; treat as OK
+  if (!r.ok && r.status !== 409) {
+    const txt = await r.text();
+    throw new Error(`GenericObject upsert failed: ${r.status} ${txt}`);
+  }
+
+  return { classId, objectId };
+}
+
+function makeSaveToGoogleWalletUrl({ objectId, classId, origin }) {
+  const saPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+  const sa = JSON.parse(fs.readFileSync(saPath, "utf8"));
+
+  const claims = {
+    aud: "google",
+    iss: sa.client_email,
+    typ: "savetowallet",
+    iat: Math.floor(Date.now() / 1000),
+    origins: [origin],
+    payload: { genericObjects: [{ id: objectId, classId }] }
+  };
+
+  const token = jwt.sign(claims, sa.private_key, { algorithm: "RS256" });
+  return `https://pay.google.com/gp/v/save/${token}`;
+}
 app.post("/api/passes/issue", async (req, res) => {
   const { member_id, full_name, member_number, valid_until, status } = req.body || {};
 
@@ -39,6 +121,25 @@ app.post("/api/passes/issue", async (req, res) => {
   };
 
   store.set(token, payload);
+    // --- Google Wallet: create/update object + build Save URL ---
+  try {
+    const issuerId = process.env.GOOGLE_ISSUER_ID;
+    const origin = process.env.PUBLIC_BASE_URL || "https://osc-pass-service.onrender.com";
+    const classSuffix = "MembershipCard"; // <-- from your class id
+
+    if (issuerId) {
+      const { classId, objectId } = await upsertGenericObject({
+        issuerId,
+        classSuffix,
+        objectSuffix: payload.token,
+        record: payload,
+      });
+
+      payload.google_wallet_url = makeSaveToGoogleWalletUrl({ objectId, classId, origin });
+    }
+  } catch (e) {
+    console.error("Google Wallet error:", e);
+  }
   res.json(payload);
 });
 
@@ -107,7 +208,10 @@ app.get("/c/:token", async (req, res) => {
 
           <div class="badge">Estado: ${escapeHtml(String(record.status).toUpperCase())}</div>
 
-          <a class="btn" href="#" onclick="alert('Próximo passo: gerar links reais Apple/Google Wallet aqui')">${primary}</a>
+          <a class="btn" href="${escapeHtml(isAndroid && record.google_wallet_url ? record.google_wallet_url : "#")}"
+             onclick="${isAndroid && record.google_wallet_url ? "" : "alert('Google Wallet ainda não está ativo para este cartão')"}">
+             ${primary}
+             </a>
           <a class="btn secondary" href="${escapeHtml(record.qr_validation_url)}">Testar Validação</a>
 
           <div class="row">
