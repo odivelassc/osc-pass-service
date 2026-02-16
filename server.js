@@ -328,6 +328,66 @@ app.get("/c/:token", async (req, res) => {
   `);
 });
 
+app.post("/admin/google-wallet/brand-class", async (req, res) => {
+  try {
+    const token = req.headers["x-admin-token"];
+    if (!process.env.ADMIN_TOKEN || token !== process.env.ADMIN_TOKEN) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const issuerId = process.env.GOOGLE_ISSUER_ID;
+    const classSuffix = "MembershipCard"; // this is your class name
+    const classId = `${issuerId}.${classSuffix}`;
+
+    const accessToken = await getGoogleAccessToken();
+
+    const logoUri = process.env.OSC_LOGO_URL || ""; // bear icon
+    const heroUri =
+      process.env.OSC_HERO_URL ||
+      process.env.OSC_FOOTER_LOGO_URL ||
+      ""; // full logo as banner
+
+    const patchBody = {
+      issuerName: "Odivelas Sports Club",
+      hexBackgroundColor: "#000000",
+      cardTitle: { defaultValue: { language: "pt-PT", value: "ODIVELAS SPORTS CLUB" } },
+
+      logo: logoUri
+        ? {
+            sourceUri: { uri: logoUri },
+            contentDescription: { defaultValue: { language: "pt-PT", value: "OSC" } }
+          }
+        : undefined,
+
+      heroImage: heroUri
+        ? {
+            sourceUri: { uri: heroUri },
+            contentDescription: { defaultValue: { language: "pt-PT", value: "Odivelas Sports Club" } }
+          }
+        : undefined
+    };
+
+    const r = await fetch(
+      `https://walletobjects.googleapis.com/walletobjects/v1/genericClass/${encodeURIComponent(classId)}`,
+      {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(patchBody)
+      }
+    );
+
+    const txt = await r.text();
+    if (!r.ok) return res.status(r.status).send(txt);
+
+    res.json({ ok: true, classId });
+  } catch (e) {
+    res.status(500).json({ error: String(e.message || e) });
+  }
+});
+
 function computeValidationState(record) {
   if (!record) return "NOT_FOUND";
 
