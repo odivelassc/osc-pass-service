@@ -342,10 +342,14 @@ app.get("/admin/ping", (req, res) => {
 
 app.post("/admin/google-wallet/brand-class", async (req, res) => {
   try {
-    const token = req.get["x-admin-token"];
-    if (!process.env.ADMIN_TOKEN || token !== process.env.ADMIN_TOKEN) {
-      return res.status(401).json({ error: "Unauthorized" });
-    }
+    const token =
+  (req.get("authorization") || "").replace(/^Bearer\s+/i, "") ||
+  req.get("x-admin-token") ||
+  "";
+
+if (!process.env.ADMIN_TOKEN || token.trim() !== String(process.env.ADMIN_TOKEN).trim()) {
+  return res.status(401).json({ error: "Unauthorized" });
+}
 
     const issuerId = process.env.GOOGLE_ISSUER_ID;
     const classSuffix = "MembershipCard"; // this is your class name
