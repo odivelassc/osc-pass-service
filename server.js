@@ -349,75 +349,59 @@ app.get("/admin/ping", (req, res) => {
 
 app.post("/admin/google-wallet/brand-class", async (req, res) => {
   try {
-    // ---- Auth: accept either Authorization: Bearer <token> OR x-admin-token: <token>
-    const auth = (req.get("authorization") || "").trim();
-    const tokenFromBearer = auth.toLowerCase().startsWith("bearer ")
-      ? auth.slice(7).trim()
-      : "";
-
-    const token = (tokenFromBearer || (req.get("x-admin-token") || "").trim()).trim();
-    const adminToken = (process.env.ADMIN_TOKEN || "").trim();
-
+    // --- Admin auth (keep simple)
+    const token = (req.get("x-admin-token") || "").trim();
+    const adminToken = String(process.env.ADMIN_TOKEN || "").trim();
     if (!adminToken || token !== adminToken) {
       return res.status(401).json({ error: "Unauthorized" });
     }
 
-    // ---- Required env
-    const issuerId = (process.env.GOOGLE_ISSUER_ID || "").trim();
+    const issuerId = String(process.env.GOOGLE_ISSUER_ID || "").trim();
     if (!issuerId) return res.status(500).json({ error: "Missing GOOGLE_ISSUER_ID" });
 
-    const classSuffix = "MembershipCard";
-    const classId = `${issuerId}.${classSuffix}`;
-
+    const classId = `${issuerId}.MembershipCard`;
     const accessToken = await getGoogleAccessToken();
 
-    // ---- Branding assets
-    const logoUri = (process.env.OSC_LOGO_URL || "").trim();              // bear icon
-    const heroUri = (process.env.OSC_FOOTER_LOGO_URL || "").trim();       // bottom full logo (banner)
+    const logoUri = String(process.env.OSC_LOGO_URL || "").trim(); // bear icon
+    const heroUri = String(process.env.OSC_HERO_URL || process.env.OSC_FOOTER_LOGO_URL || "").trim(); // bottom/logo banner
 
-    // ---- PATCH payload (non-empty)
-    const patchBody = {
+    // ✅ Use ONLY fields that are safe/valid on GenericClass branding
+    const body = {
+      id: classId,
       issuerName: "Odivelas Sports Club",
       hexBackgroundColor: "#000000",
-      cardTitle: {
-        defaultValue: { language: "pt-PT", value: "ODIVELAS SPORTS CLUB" },
-      },
     };
 
     if (logoUri) {
-      patchBody.logo = {
+      body.logo = {
         sourceUri: { uri: logoUri },
         contentDescription: { defaultValue: { language: "pt-PT", value: "OSC" } },
       };
     }
 
     if (heroUri) {
-      patchBody.heroImage = {
+      body.heroImage = {
         sourceUri: { uri: heroUri },
         contentDescription: { defaultValue: { language: "pt-PT", value: "Odivelas Sports Club" } },
       };
     }
 
-    // IMPORTANT: send updateMask so Google knows what fields you’re patching
-    const updateMask = Object.keys(patchBody).join(",");
-
-    const url =
-      `https://walletobjects.googleapis.com/walletobjects/v1/genericClass/${encodeURIComponent(classId)}` +
-      `?updateMask=${encodeURIComponent(updateMask)}`;
+    // 🚀 Use PUT (overwrite) to avoid “empty patch” behavior
+    const url = `https://walletobjects.googleapis.com/walletobjects/v1/genericClass/${encodeURIComponent(classId)}`;
 
     const r = await fetch(url, {
-      method: "PATCH",
+      method: "PUT",
       headers: {
         Authorization: `Bearer ${accessToken}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(patchBody),
+      body: JSON.stringify(body),
     });
 
     const txt = await r.text();
     if (!r.ok) return res.status(r.status).send(txt);
 
-    return res.json({ ok: true, classId, updateMask, patchBody });
+    return res.json({ ok: true, classId, updated: JSON.parse(txt) });
   } catch (e) {
     return res.status(500).json({ error: String(e.message || e) });
   }
