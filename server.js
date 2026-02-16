@@ -342,10 +342,24 @@ app.get("/admin/ping", (req, res) => {
 
 app.post("/admin/google-wallet/brand-class", async (req, res) => {
   try {
-    const token =
-  (req.get("authorization") || "").replace(/^Bearer\s+/i, "") ||
-  req.get("x-admin-token") ||
-  "";
+    
+    const bearer = (req.get("authorization") || "").trim();
+const tokenFromBearer = bearer.toLowerCase().startsWith("bearer ")
+  ? bearer.slice(7).trim()
+  : "";
+
+const token = tokenFromBearer || (req.get("x-admin-token") || "").trim();
+
+if (!process.env.ADMIN_TOKEN || token !== String(process.env.ADMIN_TOKEN).trim()) {
+  return res.status(401).json({ error: "Unauthorized" });
+}
+
+    console.log("BRAND-CLASS HIT", {
+  hasAuth: !!req.get("authorization"),
+  auth: req.get("authorization"),
+  hasX: !!req.get("x-admin-token"),
+  envLen: process.env.ADMIN_TOKEN ? process.env.ADMIN_TOKEN.length : 0
+});
 
 if (!process.env.ADMIN_TOKEN || token.trim() !== String(process.env.ADMIN_TOKEN).trim()) {
   return res.status(401).json({ error: "Unauthorized" });
