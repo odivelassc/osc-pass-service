@@ -328,6 +328,18 @@ app.get("/c/:token", async (req, res) => {
   `);
 });
 
+app.get("/admin/ping", (req, res) => {
+  res.json({
+    ok: true,
+    hasEnvAdminToken: !!process.env.ADMIN_TOKEN,
+    headerPresent: !!req.get("x-admin-token"),
+    headerPresentAlt: !!req.get("x-admin-token".toLowerCase()),
+    // shows only lengths, not the secret itself
+    envLen: process.env.ADMIN_TOKEN ? String(process.env.ADMIN_TOKEN).length : 0,
+    headerLen: req.get("x-admin-token") ? String(req.get("x-admin-token")).length : 0
+  });
+});
+
 app.post("/admin/google-wallet/brand-class", async (req, res) => {
   try {
     const token = req.get["x-admin-token"];
