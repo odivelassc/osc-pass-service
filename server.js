@@ -387,8 +387,11 @@ if (!process.env.ADMIN_TOKEN || token.trim() !== String(process.env.ADMIN_TOKEN)
     const patchBody = {
   issuerName: "Odivelas Sports Club",
   hexBackgroundColor: "#000000",
-  cardTitle: { defaultValue: { language: "pt-PT", value: "ODIVELAS SPORTS CLUB" } }
+  cardTitle: {
+    defaultValue: { language: "pt-PT", value: "ODIVELAS SPORTS CLUB" }
+  }
 };
+  console.log("PATCH BODY:", JSON.stringify(patchBody, null, 2));
 
 if (logoUri) {
   patchBody.logo = {
