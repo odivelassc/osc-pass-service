@@ -143,6 +143,13 @@ app.post("/api/passes/issue", async (req, res) => {
   res.json(payload);
 });
 
+app.get("/admin/env-check", (req, res) => {
+  res.json({
+    hasEnvAdminToken: !!process.env.ADMIN_TOKEN,
+    envLen: process.env.ADMIN_TOKEN ? String(process.env.ADMIN_TOKEN).length : 0
+  });
+});
+
 app.get("/v/:token", (req, res) => {
   const record = store.get(req.params.token);
 
