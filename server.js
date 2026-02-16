@@ -224,7 +224,6 @@ app.get("/v/:token", (req, res) => {
             ? `<img class="brandLogo" src="${escapeHtml(logoUrl)}" alt="Odivelas Sports Club" />`
             : ""
         }
-        <div class="club">${escapeHtml(clubName)}</div>
       </div>
 
       <svg class="icon" viewBox="0 0 160 160" aria-hidden="true">
