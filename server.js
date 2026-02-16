@@ -145,14 +145,115 @@ app.post("/api/passes/issue", async (req, res) => {
 
 app.get("/v/:token", (req, res) => {
   const record = store.get(req.params.token);
-  if (!record) return res.status(404).send("NOT_FOUND");
 
-  const now = new Date();
-  const validUntil = record.valid_until ? new Date(record.valid_until) : null;
+  const state = computeValidationState(record);
+  const isValid = state === "VALID";
 
-  if (record.status !== "active") return res.send("NOT_ACTIVE");
-  if (validUntil && now > validUntil) return res.send("EXPIRED");
-  return res.send("VALID");
+  const title = isValid ? "VÁLIDO" : "NÃO VÁLIDO";
+  const subtitle =
+    state === "VALID" ? "Cartão ativo" :
+    state === "NOT_ACTIVE" ? "Cartão desativado" :
+    state === "EXPIRED" ? "Cartão expirado" :
+    "Cartão não encontrado";
+
+  // Use the FULL logo first, fallback to bear icon
+  const logoUrl =
+    process.env.OSC_FOOTER_LOGO_URL ||
+    process.env.OSC_LOGO_URL ||
+    "";
+
+  const clubName = "ODIVELAS SPORTS CLUB";
+
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.send(`
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>${escapeHtml(clubName)} — Validação</title>
+  <style>
+    :root{
+      --bg:#000;
+      --text:#fff;
+      --muted:rgba(255,255,255,.70);
+      --yellow:#f4c400;
+      --red:#ff3b30;
+      --ring:rgba(255,255,255,.10);
+    }
+    body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;}
+    .wrap{min-height:100vh;display:grid;place-items:center;padding:20px;}
+    .panel{width:min(560px, 96vw);text-align:center;padding:24px 18px 28px;}
+    .top{display:block;opacity:.95;margin-bottom:10px}
+    .club{font-weight:900;letter-spacing:.08em;font-size:12px;color:rgba(255,255,255,.60)}
+    .icon{margin:18px auto 12px;width:128px;height:128px}
+    .ring{stroke:var(--ring);stroke-width:10;fill:none}
+    .ok{stroke:var(--yellow);stroke-width:10;fill:none;stroke-linecap:round;stroke-linejoin:round;
+      stroke-dasharray:160;stroke-dashoffset:160;animation:draw .9s ease forwards;
+    }
+    .bad{stroke:var(--red);stroke-width:10;fill:none;stroke-linecap:round;
+      stroke-dasharray:160;stroke-dashoffset:160;animation:draw .9s ease forwards;
+    }
+    @keyframes draw{to{stroke-dashoffset:0}}
+    .title{
+      font-size:54px;font-weight:1000;margin:0;letter-spacing:.02em;
+      color:${isValid ? "var(--yellow)" : "var(--red)"};
+    }
+    .sub{margin-top:10px;color:var(--muted);font-size:18px;font-weight:700}
+    .pulse{
+      margin:18px auto 0;width:12px;height:12px;border-radius:999px;
+      background:${isValid ? "var(--yellow)" : "var(--red)"};
+      box-shadow:0 0 0 0 ${isValid ? "rgba(244,196,0,.55)" : "rgba(255,59,48,.45)"};
+      animation:pulse 1.4s infinite;
+    }
+    @keyframes pulse{
+      0%{box-shadow:0 0 0 0 ${isValid ? "rgba(244,196,0,.55)" : "rgba(255,59,48,.45)"}}
+      70%{box-shadow:0 0 0 18px rgba(0,0,0,0)}
+      100%{box-shadow:0 0 0 0 rgba(0,0,0,0)}
+    }
+    .hint{margin-top:16px;color:rgba(255,255,255,.42);font-size:12px}
+    .brandLogo{max-width:280px;height:auto;display:block;margin:0 auto 10px;}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="panel">
+      <div class="top">
+        ${
+          logoUrl
+            ? `<img class="brandLogo" src="${escapeHtml(logoUrl)}" alt="Odivelas Sports Club" />`
+            : ""
+        }
+        <div class="club">${escapeHtml(clubName)}</div>
+      </div>
+
+      <svg class="icon" viewBox="0 0 160 160" aria-hidden="true">
+        <circle class="ring" cx="80" cy="80" r="56"></circle>
+        ${
+          isValid
+            ? `<path class="ok" d="M52 82 L72 102 L112 62"></path>`
+            : `<path class="bad" d="M60 60 L100 100"></path>
+               <path class="bad" d="M100 60 L60 100"></path>`
+        }
+      </svg>
+
+      <h1 class="title">${title}</h1>
+      <div class="sub">${escapeHtml(subtitle)}</div>
+      <div class="pulse"></div>
+
+      <div class="hint">Validação oficial — Odivelas Sports Club</div>
+    </div>
+  </div>
+</body>
+</html>
+`);
+});
+
+app.get("/v/:token.txt", (req, res) => {
+  const record = store.get(req.params.token);
+  const state = computeValidationState(record);
+  res.setHeader("Content-Type", "text/plain; charset=utf-8");
+  res.send(state);
 });
 
 app.get("/c/:token", async (req, res) => {
@@ -227,6 +328,17 @@ app.get("/c/:token", async (req, res) => {
     </html>
   `);
 });
+
+function computeValidationState(record) {
+  if (!record) return "NOT_FOUND";
+
+  const now = new Date();
+  const validUntil = record.valid_until ? new Date(record.valid_until) : null;
+
+  if (record.status !== "active") return "NOT_ACTIVE";
+  if (validUntil && now > validUntil) return "EXPIRED";
+  return "VALID";
+}
 
 function escapeHtml(str) {
   return String(str).replace(/[&<>"']/g, (m) => ({
