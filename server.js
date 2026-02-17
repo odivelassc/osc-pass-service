@@ -404,16 +404,16 @@ app.post("/admin/google-wallet/brand-class", async (req, res) => {
    const body = {
   id: classId,
   issuerName: "Odivelas Sports Club",
-  hexBackgroundColor: "#000000",
+  // Ensure this is exactly like this:
+  hexBackgroundColor: "#000000", 
   cardTitle: {
     defaultValue: { language: "pt-PT", value: "ODIVELAS SPORTS CLUB" }
   },
-  // This makes the fields appear on the back/details page of the card
-  textModulesData: [
-    { id: "memberNumber", header: "Nº Sócio" },
-    { id: "type", header: "Tipo" },
-    { id: "validUntil", header: "Válido até" }
-  ],
+  logo: {
+    sourceUri: { uri: process.env.OSC_LOGO_URL },
+    contentDescription: { defaultValue: { language: "pt-PT", value: "OSC Logo" } }
+  },
+  // This is what makes the 3 columns appear on the card face
   classTemplateInfo: {
     cardRowTemplateInfos: [{
       threeItems: {
@@ -422,7 +422,13 @@ app.post("/admin/google-wallet/brand-class", async (req, res) => {
         endItem: { firstValue: { fieldPath: "object.textModulesData['validUntil']" } }
       }
     }]
-  }
+  },
+  // This makes the fields appear on the "Details" screen
+  textModulesData: [
+    { id: "memberNumber", header: "Nº Sócio" },
+    { id: "type", header: "Tipo" },
+    { id: "validUntil", header: "Válido até" }
+  ]
 };
     
     if (logoUri) {
