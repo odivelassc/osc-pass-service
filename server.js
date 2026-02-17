@@ -87,12 +87,17 @@ async function upsertGenericObject({ issuerId, classSuffix, objectSuffix, record
     ],
     // ✅ hexBackgroundColor at object level — takes priority over class-level color
     hexBackgroundColor: "#000000",
-    // ✅ wideLogo = full rectangular display, no circular crop
-    // Transparent PNG recommended at 320x100px
+    // Google requires both logo (circle slot) AND wideLogo (wide display)
+    ...(logoUri?.startsWith("https://") && {
+      logo: {
+        sourceUri: { uri: logoUri },
+        contentDescription: { defaultValue: { language: "pt-PT", value: "OSC Logo" } }
+      }
+    }),
     ...(logoUri?.startsWith("https://") && {
       wideLogo: {
         sourceUri: { uri: logoUri },
-        contentDescription: { defaultValue: { language: "pt-PT", value: "OSC Logo" } }
+        contentDescription: { defaultValue: { language: "pt-PT", value: "OSC Logo Wide" } }
       }
     })
     // heroImage intentionally removed — it was overriding hexBackgroundColor with yellow
@@ -449,11 +454,17 @@ app.post("/admin/google-wallet/brand-class", async (req, res) => {
       cardTitle: {
         defaultValue: { language: "pt-PT", value: "ODIVELAS SPORTS CLUB" }
       },
-      // ✅ wideLogo = full rectangular, no circular crop
+      // Google requires both logo (circle slot) AND wideLogo (wide display)
+      ...(logoUri?.startsWith("https://") && {
+        logo: {
+          sourceUri: { uri: logoUri },
+          contentDescription: { defaultValue: { language: "pt-PT", value: "OSC Logo" } }
+        }
+      }),
       ...(logoUri?.startsWith("https://") && {
         wideLogo: {
           sourceUri: { uri: logoUri },
-          contentDescription: { defaultValue: { language: "pt-PT", value: "OSC Logo" } }
+          contentDescription: { defaultValue: { language: "pt-PT", value: "OSC Logo Wide" } }
         }
       }),
       // heroImage intentionally removed — was overriding hexBackgroundColor with yellow
