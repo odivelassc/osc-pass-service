@@ -82,7 +82,7 @@ async function upsertGenericObject({ issuerId, classSuffix, objectSuffix, record
     },
     textModulesData: [
       { id: "memberNumber", header: "Nº Sócio", body: String(record.member_number || "") },
-      { id: "type",         header: "Tipo",      body: "Sócio" },
+      { id: "type",         header: "Tipo",      body: record.member_type || "Sócio" },
       { id: "validUntil",   header: "Válido até", body: String(record.valid_until || "—") }
     ],
     // ✅ hexBackgroundColor at object level — takes priority over class-level color
@@ -99,8 +99,14 @@ async function upsertGenericObject({ issuerId, classSuffix, objectSuffix, record
         sourceUri: { uri: logoUri },
         contentDescription: { defaultValue: { language: "pt-PT", value: "OSC Logo Wide" } }
       }
+    }),
+    // heroImage re-enabled for footer banner (now using proper transparent PNG)
+    ...(heroUri?.startsWith("https://") && {
+      heroImage: {
+        sourceUri: { uri: heroUri },
+        contentDescription: { defaultValue: { language: "pt-PT", value: "OSC Banner" } }
+      }
     })
-    // heroImage intentionally removed — it was overriding hexBackgroundColor with yellow
   };
 
   let r = await fetch(url, {
@@ -155,7 +161,7 @@ function makeSaveToGoogleWalletUrl({ objectId, classId, origin }) {
 }
 
 app.post("/api/passes/issue", async (req, res) => {
-  const { member_id, full_name, member_number, valid_until, status } = req.body || {};
+  const { member_id, full_name, member_number, member_type, valid_until, status } = req.body || {};
 
   if (!member_id || !full_name || !member_number) {
     return res.status(400).json({
@@ -175,6 +181,7 @@ app.post("/api/passes/issue", async (req, res) => {
     member_id,
     full_name,
     member_number,
+    member_type: member_type || "Sócio",  // Default to "Sócio" if not provided
     valid_until: valid_until || null,
     status: status || "active",
     card_public_url: `${baseUrl}/c/${token}`,
@@ -467,7 +474,13 @@ app.post("/admin/google-wallet/brand-class", async (req, res) => {
           contentDescription: { defaultValue: { language: "pt-PT", value: "OSC Logo Wide" } }
         }
       }),
-      // heroImage intentionally removed — was overriding hexBackgroundColor with yellow
+      // heroImage re-enabled for footer banner
+      ...(heroUri?.startsWith("https://") && {
+        heroImage: {
+          sourceUri: { uri: heroUri },
+          contentDescription: { defaultValue: { language: "pt-PT", value: "OSC Banner" } }
+        }
+      }),
       classTemplateInfo: {
         cardRowTemplateInfos: [{
           threeItems: {
