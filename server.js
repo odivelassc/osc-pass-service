@@ -384,6 +384,8 @@ app.post("/admin/google-wallet/brand-class", async (req, res) => {
     const issuerId = String(process.env.GOOGLE_ISSUER_ID || "").trim();
     const classId = `${issuerId}.MembershipCard`;
     const accessToken = await getGoogleAccessToken();
+    const logoUri = process.env.OSC_LOGO_URL || "";
+    const heroUri = process.env.OSC_HERO_URL || process.env.OSC_FOOTER_LOGO_URL || "";
 
     const body = {
       id: classId,
