@@ -55,28 +55,23 @@ async function upsertGenericObject({ issuerId, classSuffix, objectSuffix, record
 
   const url = `https://walletobjects.googleapis.com/walletobjects/v1/genericObject/${encodeURIComponent(objectId)}`;
 
-const body = {
+cconst body = {
   id: objectId,
   classId,
-  state: record.status === "active" ? "ACTIVE" : "INACTIVE",
-  cardTitle: { defaultValue: { language: "pt-PT", value: "ODIVELAS SPORTS CLUB" } },
-  header: { defaultValue: { language: "pt-PT", value: record.full_name } },
-  subheader: { defaultValue: { language: "pt-PT", value: "Membro" } }, 
-  barcode: { 
-    type: "QR_CODE", 
-    value: record.qr_validation_url,
-    renderOptions: { appearance: "NON_CONFORMANT" } 
+  ...
+  logo: {
+    sourceUri: { uri: process.env.OSC_LOGO_URL || '' },
+    contentDescription: {
+      defaultValue: { language: 'pt-PT', value: 'OSC Logo' }
+    }
   },
-  textModulesData: [
-    { id: "memberNumber", header: "N", body: String(record.member_number) },
-    { id: "type", header: "Tipo", body: "SÓCIO FUNDADOR" },
-    { id: "validUntil", header: "Válido até", body: record.valid_until || "—" }
-  ],
   heroImage: {
-    sourceUri: { uri: process.env.OSC_HERO_URL || "" },
-    contentDescription: { defaultValue: { language: "pt-PT", value: "OSC Banner" } }
+    sourceUri: { uri: process.env.OSC_HERO_URL || '' },
+    contentDescription: {
+      defaultValue: { language: 'pt-PT', value: 'OSC Banner' }
+    }
   }
-};
+};;
 
   let r = await fetch(url, {
     method: "PATCH",
@@ -384,8 +379,28 @@ app.post("/admin/google-wallet/brand-class", async (req, res) => {
     const issuerId = String(process.env.GOOGLE_ISSUER_ID || "").trim();
     const classId = `${issuerId}.MembershipCard`;
     const accessToken = await getGoogleAccessToken();
-    const logoUri = process.env.OSC_LOGO_URL || "";
-    const heroUri = process.env.OSC_HERO_URL || process.env.OSC_FOOTER_LOGO_URL || "";
+    const logoUri = process.env.OSC_LOGO_URL;
+    const heroUri = process.env.OSC_HERO_URL;
+
+if (!logoUri || !logoUri.startsWith('https://')) {
+  console.warn('⚠️  OSC_LOGO_URL is missing or not HTTPS — logo will not render');
+}
+
+const body = {
+  ...
+  ...(logoUri?.startsWith('https://') && {
+    logo: {
+      sourceUri: { uri: logoUri },
+      contentDescription: { defaultValue: { language: 'pt-PT', value: 'OSC Logo' } }
+    }
+  }),
+  ...(heroUri?.startsWith('https://') && {
+    heroImage: {
+      sourceUri: { uri: heroUri },
+      contentDescription: { defaultValue: { language: 'pt-PT', value: 'OSC Banner' } }
+    }
+  }),
+};
 
     const body = {
       id: classId,
