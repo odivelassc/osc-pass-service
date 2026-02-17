@@ -402,24 +402,28 @@ app.post("/admin/google-wallet/brand-class", async (req, res) => {
     const heroUri = String(process.env.OSC_HERO_URL || process.env.OSC_FOOTER_LOGO_URL || "").trim(); // bottom/logo banner
 
    const body = {
-      id: classId,
-      issuerName: "Odivelas Sports Club",
-      hexBackgroundColor: "#000000",
-      // Added cardTitle to ensure the name appears at the top
-      cardTitle: {
-        defaultValue: { language: "pt-PT", value: "ODIVELAS SPORTS CLUB" }
-      },
-      // This template creates the columns for member details
-      classTemplateInfo: {
-        cardRowTemplateInfos: [{
-          threeItems: {
-            startItem: { firstValue: { fieldPath: "object.textModulesData['memberNumber']" } },
-            middleItem: { firstValue: { fieldPath: "object.textModulesData['type']" } },
-            endItem: { firstValue: { fieldPath: "object.textModulesData['validUntil']" } }
-          }
-        }]
+  id: classId,
+  issuerName: "Odivelas Sports Club",
+  hexBackgroundColor: "#000000",
+  cardTitle: {
+    defaultValue: { language: "pt-PT", value: "ODIVELAS SPORTS CLUB" }
+  },
+  // This makes the fields appear on the back/details page of the card
+  textModulesData: [
+    { id: "memberNumber", header: "Nº Sócio" },
+    { id: "type", header: "Tipo" },
+    { id: "validUntil", header: "Válido até" }
+  ],
+  classTemplateInfo: {
+    cardRowTemplateInfos: [{
+      threeItems: {
+        startItem: { firstValue: { fieldPath: "object.textModulesData['memberNumber']" } },
+        middleItem: { firstValue: { fieldPath: "object.textModulesData['type']" } },
+        endItem: { firstValue: { fieldPath: "object.textModulesData['validUntil']" } }
       }
-    };
+    }]
+  }
+};
     
     if (logoUri) {
       body.logo = {
