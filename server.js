@@ -434,7 +434,7 @@ app.get("/c/:token", async (req, res) => {
 
           ${record.google_wallet_url ? `
             <a href="${escapeHtml(record.google_wallet_url)}" style="display:inline-block;margin-top:16px">
-              <img src="https://pay.google.com/gp/p/generate_button?t=save&lo=en" alt="Add to Google Wallet" style="width:200px;height:auto" />
+              <img src="https://developers.google.com/static/wallet/images/add_to_google_wallet_button.svg" alt="Add to Google Wallet" style="width:200px;height:auto" />
             </a>
           ` : ''}
           
