@@ -75,19 +75,22 @@ async function upsertGenericObject({ issuerId, classSuffix, objectSuffix, record
         body: record.valid_until || "—"
       }
     ],
+      ...(process.env.OSC_LOGO_URL?.startsWith('https://') && {
     logo: {
-      sourceUri: { uri: process.env.OSC_LOGO_URL || '' },
+      sourceUri: { uri: process.env.OSC_LOGO_URL },
       contentDescription: {
         defaultValue: { language: 'pt-PT', value: 'OSC Logo' }
       }
-    },
+    }
+  }),
+  ...(process.env.OSC_HERO_URL?.startsWith('https://') && {
     heroImage: {
-      sourceUri: { uri: process.env.OSC_HERO_URL || '' },
+      sourceUri: { uri: process.env.OSC_HERO_URL },
       contentDescription: {
         defaultValue: { language: 'pt-PT', value: 'OSC Banner' }
       }
     }
-  };
+  })
 
   let r = await fetch(url, {
     method: "PATCH",
