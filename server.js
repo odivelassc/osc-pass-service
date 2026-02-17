@@ -56,24 +56,24 @@ async function upsertGenericObject({ issuerId, classSuffix, objectSuffix, record
 
   const url = `https://walletobjects.googleapis.com/walletobjects/v1/genericObject/${encodeURIComponent(objectId)}`;
 
- const body = {
+const body = {
   id: objectId,
   classId,
   state: record.status === "active" ? "ACTIVE" : "INACTIVE",
-  // This is the big name at the top
+  // FIX: Added cardTitle to resolve "card_title must be set" error
+  cardTitle: { defaultValue: { language: "pt-PT", value: "ODIVELAS SPORTS CLUB" } },
   header: { defaultValue: { language: "pt-PT", value: record.full_name } },
   subheader: { defaultValue: { language: "pt-PT", value: "Membro" } }, 
   barcode: { 
     type: "QR_CODE", 
     value: record.qr_validation_url,
-    renderOptions: { appearance: "NON_CONFORMANT" } // Adds the colorful QR border
+    renderOptions: { appearance: "NON_CONFORMANT" } 
   },
   textModulesData: [
     { id: "memberNumber", header: "N", body: String(record.member_number) },
-    { id: "type", header: "Tipo", body: "SÓCIO" },
+    { id: "type", header: "Tipo", body: "SÓCIO FUNDADOR" }, // Updated to match your image
     { id: "validUntil", header: "Válido até", body: record.valid_until || "—" }
   ],
-  // Add the hero image here so it appears on the card
   heroImage: {
     sourceUri: { uri: process.env.OSC_HERO_URL || "" },
     contentDescription: { defaultValue: { language: "pt-PT", value: "OSC Banner" } }
@@ -401,23 +401,26 @@ app.post("/admin/google-wallet/brand-class", async (req, res) => {
     const logoUri = String(process.env.OSC_LOGO_URL || "").trim(); // bear icon
     const heroUri = String(process.env.OSC_HERO_URL || process.env.OSC_FOOTER_LOGO_URL || "").trim(); // bottom/logo banner
 
-    // ✅ Use ONLY fields that are safe/valid on GenericClass branding
-    const body = {
-  id: classId,
-  issuerName: "Odivelas Sports Club",
-  hexBackgroundColor: "#000000",
-  // ADD THIS SECTION TO DEFINE THE LAYOUT
-  classTemplateInfo: {
-    cardRowTemplateInfos: [{
-      threeItems: {
-        startItem: { firstValue: { fieldPath: "object.textModulesData['memberNumber']" } },
-        middleItem: { firstValue: { fieldPath: "object.textModulesData['type']" } },
-        endItem: { firstValue: { fieldPath: "object.textModulesData['validUntil']" } }
+   const body = {
+      id: classId,
+      issuerName: "Odivelas Sports Club",
+      hexBackgroundColor: "#000000",
+      // Added cardTitle to ensure the name appears at the top
+      cardTitle: {
+        defaultValue: { language: "pt-PT", value: "ODIVELAS SPORTS CLUB" }
+      },
+      // This template creates the columns for member details
+      classTemplateInfo: {
+        cardRowTemplateInfos: [{
+          threeItems: {
+            startItem: { firstValue: { fieldPath: "object.textModulesData['memberNumber']" } },
+            middleItem: { firstValue: { fieldPath: "object.textModulesData['type']" } },
+            endItem: { firstValue: { fieldPath: "object.textModulesData['validUntil']" } }
+          }
+        }]
       }
-    }]
-  }
-};
-
+    };
+    
     if (logoUri) {
       body.logo = {
         sourceUri: { uri: logoUri },
