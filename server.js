@@ -9,6 +9,35 @@ const { fetch } = require("undici");
 const app = express();
 app.use(express.json());
 
+function escapeHtml(str) {
+  return String(str ?? "").replace(/[&<>"']/g, (m) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#039;"
+  }[m]));
+}
+
+function computeValidationState(record) {
+  if (!record) return { state: "INVALID", label: "Inválido" };
+
+  if (record.status !== "active") {
+    return { state: "INACTIVE", label: "Inativo" };
+  }
+
+  if (record.valid_until) {
+    const now = new Date();
+    const validUntil = new Date(record.valid_until);
+
+    if (validUntil < now) {
+      return { state: "EXPIRED", label: "Expirado" };
+    }
+  }
+
+  return { state: "VALID", label: "Válido" };
+}
+
 // Phase 1: in-memory store (we'll replace with a DB later)
 const store = new Map();
 async function getGoogleAccessToken() {
