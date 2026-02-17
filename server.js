@@ -56,22 +56,29 @@ async function upsertGenericObject({ issuerId, classSuffix, objectSuffix, record
 
   const url = `https://walletobjects.googleapis.com/walletobjects/v1/genericObject/${encodeURIComponent(objectId)}`;
 
-  const body = {
-    id: objectId,
-    classId,
-    state: record.status === "active" ? "ACTIVE" : "INACTIVE",
-    cardTitle: { defaultValue: { language: "pt-PT", value: "ODIVELAS SPORTS CLUB" } },
-    header: { defaultValue: { language: "pt-PT", value: record.full_name } },
-    subheader: { defaultValue: { language: "pt-PT", value: "Cartão de Sócio" } },
-    barcode: { type: "QR_CODE", value: record.qr_validation_url },
-    textModulesData: [
-      { id: "memberNumber", header: "Nº Sócio", body: record.member_number },
-      { id: "validUntil", header: "Válido até", body: record.valid_until || "—" }
-    ],
-    linksModuleData: {
-      uris: [{ uri: record.card_public_url, description: "Abrir cartão" }]
-    }
-  };
+ const body = {
+  id: objectId,
+  classId,
+  state: record.status === "active" ? "ACTIVE" : "INACTIVE",
+  // This is the big name at the top
+  header: { defaultValue: { language: "pt-PT", value: record.full_name } },
+  subheader: { defaultValue: { language: "pt-PT", value: "Membro" } }, 
+  barcode: { 
+    type: "QR_CODE", 
+    value: record.qr_validation_url,
+    renderOptions: { appearance: "NON_CONFORMANT" } // Adds the colorful QR border
+  },
+  textModulesData: [
+    { id: "memberNumber", header: "N", body: String(record.member_number) },
+    { id: "type", header: "Tipo", body: "SÓCIO" },
+    { id: "validUntil", header: "Válido até", body: record.valid_until || "—" }
+  ],
+  // Add the hero image here so it appears on the card
+  heroImage: {
+    sourceUri: { uri: process.env.OSC_HERO_URL || "" },
+    contentDescription: { defaultValue: { language: "pt-PT", value: "OSC Banner" } }
+  }
+};
 
   // Try PATCH (update). If 404 then create.
   let r = await fetch(url, {
@@ -396,10 +403,20 @@ app.post("/admin/google-wallet/brand-class", async (req, res) => {
 
     // ✅ Use ONLY fields that are safe/valid on GenericClass branding
     const body = {
-      id: classId,
-      issuerName: "Odivelas Sports Club",
-      hexBackgroundColor: "#000000",
-    };
+  id: classId,
+  issuerName: "Odivelas Sports Club",
+  hexBackgroundColor: "#000000",
+  // ADD THIS SECTION TO DEFINE THE LAYOUT
+  classTemplateInfo: {
+    cardRowTemplateInfos: [{
+      threeItems: {
+        startItem: { firstValue: { fieldPath: "object.textModulesData['memberNumber']" } },
+        middleItem: { firstValue: { fieldPath: "object.textModulesData['type']" } },
+        endItem: { firstValue: { fieldPath: "object.textModulesData['validUntil']" } }
+      }
+    }]
+  }
+};
 
     if (logoUri) {
       body.logo = {
