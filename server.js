@@ -55,23 +55,39 @@ async function upsertGenericObject({ issuerId, classSuffix, objectSuffix, record
 
   const url = `https://walletobjects.googleapis.com/walletobjects/v1/genericObject/${encodeURIComponent(objectId)}`;
 
-cconst body = {
-  id: objectId,
-  classId,
-  ...
-  logo: {
-    sourceUri: { uri: process.env.OSC_LOGO_URL || '' },
-    contentDescription: {
-      defaultValue: { language: 'pt-PT', value: 'OSC Logo' }
+  const body = {
+    id: objectId,
+    classId,
+    textModulesData: [
+      {
+        id: "memberNumber",
+        header: "Nº Sócio",
+        body: record.member_number
+      },
+      {
+        id: "type",
+        header: "Tipo",
+        body: "Sócio"
+      },
+      {
+        id: "validUntil",
+        header: "Válido até",
+        body: record.valid_until || "—"
+      }
+    ],
+    logo: {
+      sourceUri: { uri: process.env.OSC_LOGO_URL || '' },
+      contentDescription: {
+        defaultValue: { language: 'pt-PT', value: 'OSC Logo' }
+      }
+    },
+    heroImage: {
+      sourceUri: { uri: process.env.OSC_HERO_URL || '' },
+      contentDescription: {
+        defaultValue: { language: 'pt-PT', value: 'OSC Banner' }
+      }
     }
-  },
-  heroImage: {
-    sourceUri: { uri: process.env.OSC_HERO_URL || '' },
-    contentDescription: {
-      defaultValue: { language: 'pt-PT', value: 'OSC Banner' }
-    }
-  }
-};;
+  };
 
   let r = await fetch(url, {
     method: "PATCH",
@@ -117,6 +133,7 @@ function makeSaveToGoogleWalletUrl({ objectId, classId, origin }) {
   const token = jwt.sign(claims, sa.private_key, { algorithm: "RS256" });
   return `https://pay.google.com/gp/v/save/${token}`;
 }
+
 app.post("/api/passes/issue", async (req, res) => {
   const { member_id, full_name, member_number, valid_until, status } = req.body || {};
 
@@ -179,13 +196,13 @@ app.get("/v/:token", (req, res) => {
   const record = store.get(req.params.token);
 
   const state = computeValidationState(record);
-  const isValid = state === "VALID";
+  const isValid = state.state === "VALID";
 
   const title = isValid ? "VÁLIDO" : "NÃO VÁLIDO";
   const subtitle =
-    state === "VALID" ? "Cartão ativo" :
-    state === "NOT_ACTIVE" ? "Cartão desativado" :
-    state === "EXPIRED" ? "Cartão expirado" :
+    state.state === "VALID" ? "Cartão ativo" :
+    state.state === "INACTIVE" ? "Cartão desativado" :
+    state.state === "EXPIRED" ? "Cartão expirado" :
     "Cartão não encontrado";
 
   const logoUrl =
@@ -283,7 +300,7 @@ app.get("/v/:token.txt", (req, res) => {
   const record = store.get(req.params.token);
   const state = computeValidationState(record);
   res.setHeader("Content-Type", "text/plain; charset=utf-8");
-  res.send(state);
+  res.send(state.state);
 });
 
 app.get("/c/:token", async (req, res) => {
@@ -305,15 +322,15 @@ app.get("/c/:token", async (req, res) => {
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <title>Cartão de Sócio - Odivelas SC</title>
         <style>
-          body{font-family:Arial;padding:18px;max-width:520px;margin:0 auto}
-          .card{border:1px solid #ddd;border-radius:14px;padding:16px}
-          .title{font-weight:800;font-size:18px}
+          body{font-family:Arial;padding:18px;max-width:520px;margin:0 auto;background:#000;color:#fff}
+          .card{border:1px solid #333;border-radius:14px;padding:16px;background:#111}
+          .title{font-weight:800;font-size:18px;color:#f4c400}
           .row{margin-top:10px}
-          .label{color:#666;font-size:12px}
-          .value{font-size:16px;font-weight:700}
-          .badge{display:inline-block;padding:6px 10px;border-radius:999px;background:#f2f2f2;margin-top:8px}
-          .btn{display:block;text-align:center;padding:12px 14px;border-radius:10px;background:#000;color:#fff;text-decoration:none;margin-top:12px}
-          .btn.secondary{background:#444}
+          .label{color:#999;font-size:12px}
+          .value{font-size:16px;font-weight:700;color:#fff}
+          .badge{display:inline-block;padding:6px 10px;border-radius:999px;background:#222;margin-top:8px;color:#f4c400;font-weight:700}
+          .btn{display:block;text-align:center;padding:12px 14px;border-radius:10px;background:#f4c400;color:#000;text-decoration:none;margin-top:12px;font-weight:700}
+          .btn.secondary{background:#333;color:#fff}
           img.qr{width:160px;height:160px;margin-top:14px}
           .small{color:#666;font-size:12px;margin-top:10px}
         </style>
@@ -382,25 +399,9 @@ app.post("/admin/google-wallet/brand-class", async (req, res) => {
     const logoUri = process.env.OSC_LOGO_URL;
     const heroUri = process.env.OSC_HERO_URL;
 
-if (!logoUri || !logoUri.startsWith('https://')) {
-  console.warn('⚠️  OSC_LOGO_URL is missing or not HTTPS — logo will not render');
-}
-
-const body = {
-  ...
-  ...(logoUri?.startsWith('https://') && {
-    logo: {
-      sourceUri: { uri: logoUri },
-      contentDescription: { defaultValue: { language: 'pt-PT', value: 'OSC Logo' } }
+    if (!logoUri || !logoUri.startsWith('https://')) {
+      console.warn('⚠️  OSC_LOGO_URL is missing or not HTTPS — logo will not render');
     }
-  }),
-  ...(heroUri?.startsWith('https://') && {
-    heroImage: {
-      sourceUri: { uri: heroUri },
-      contentDescription: { defaultValue: { language: 'pt-PT', value: 'OSC Banner' } }
-    }
-  }),
-};
 
     const body = {
       id: classId,
@@ -410,14 +411,18 @@ const body = {
       cardTitle: {
         defaultValue: { language: "pt-PT", value: "ODIVELAS SPORTS CLUB" }
       },
-      logo: {
-        sourceUri: { uri: logoUri },
-        contentDescription: { defaultValue: { language: "pt-PT", value: "OSC Logo" } }
-      },
-      heroImage: {
-        sourceUri: { uri: heroUri },
-        contentDescription: { defaultValue: { language: "pt-PT", value: "Odivelas Sports Club" } }
-      },
+      ...(logoUri?.startsWith('https://') && {
+        logo: {
+          sourceUri: { uri: logoUri },
+          contentDescription: { defaultValue: { language: 'pt-PT', value: 'OSC Logo' } }
+        }
+      }),
+      ...(heroUri?.startsWith('https://') && {
+        heroImage: {
+          sourceUri: { uri: heroUri },
+          contentDescription: { defaultValue: { language: 'pt-PT', value: 'OSC Banner' } }
+        }
+      }),
       classTemplateInfo: {
         cardRowTemplateInfos: [{
           threeItems: {
