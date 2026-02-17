@@ -393,46 +393,36 @@ app.post("/admin/google-wallet/brand-class", async (req, res) => {
     const heroUri = String(process.env.OSC_HERO_URL || process.env.OSC_FOOTER_LOGO_URL || "").trim();
 
    const body = {
-  id: classId,
-  issuerName: "Odivelas Sports Club",
-  reviewStatus: "UNDER_REVIEW",
-  hexBackgroundColor: "#000000", 
-    cardTitle: {
-    defaultValue: { language: "pt-PT", value: "ODIVELAS SPORTS CLUB" }
-  },
-  logo: {
-    sourceUri: { uri: process.env.OSC_LOGO_URL },
-    contentDescription: { defaultValue: { language: "pt-PT", value: "Logo OSC" } }
-  },
-  classTemplateInfo: {
-    cardRowTemplateInfos: [{
-      threeItems: {
-        startItem: { firstValue: { fieldPath: "object.textModulesData['memberNumber']" } },
-        middleItem: { firstValue: { fieldPath: "object.textModulesData['type']" } },
-        endItem: { firstValue: { fieldPath: "object.textModulesData['validUntil']" } }
-      }
-    }]
-  },
-  textModulesData: [
-    { id: "memberNumber", header: "Nº Sócio" },
-    { id: "type", header: "Tipo" },
-    { id: "validUntil", header: "Válido até" }
-  ]
-};
-    
-    if (logoUri) {
-      body.logo = {
+      id: classId,
+      issuerName: "Odivelas Sports Club",
+      reviewStatus: "UNDER_REVIEW",
+      hexBackgroundColor: "#000000", 
+      cardTitle: {
+        defaultValue: { language: "pt-PT", value: "ODIVELAS SPORTS CLUB" }
+      },
+      logo: {
         sourceUri: { uri: logoUri },
-        contentDescription: { defaultValue: { language: "pt-PT", value: "OSC" } },
-      };
-    }
-
-    if (heroUri) {
-      body.heroImage = {
+        contentDescription: { defaultValue: { language: "pt-PT", value: "Logo OSC" } }
+      },
+      heroImage: {
         sourceUri: { uri: heroUri },
-        contentDescription: { defaultValue: { language: "pt-PT", value: "Odivelas Sports Club" } },
-      };
-    }
+        contentDescription: { defaultValue: { language: "pt-PT", value: "Odivelas Sports Club" } }
+      },
+      classTemplateInfo: {
+        cardRowTemplateInfos: [{
+          threeItems: {
+            startItem: { firstValue: { fieldPath: "object.textModulesData['memberNumber']" } },
+            middleItem: { firstValue: { fieldPath: "object.textModulesData['type']" } },
+            endItem: { firstValue: { fieldPath: "object.textModulesData['validUntil']" } }
+          }
+        }]
+      },
+      textModulesData: [
+        { id: "memberNumber", header: "Nº Sócio" },
+        { id: "type", header: "Tipo" },
+        { id: "validUntil", header: "Válido até" }
+      ]
+    };
 
     const url = `https://walletobjects.googleapis.com/walletobjects/v1/genericClass/${encodeURIComponent(classId)}`;
 
