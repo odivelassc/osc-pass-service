@@ -78,6 +78,15 @@ async function upsertGenericObject({ issuerId, classSuffix, objectSModulesData: 
     }
   }
 };
+    
+  let r = await fetch(url, {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
 
   if (r.status === 404) {
     r = await fetch("https://walletobjects.googleapis.com/walletobjects/v1/genericObject", {
