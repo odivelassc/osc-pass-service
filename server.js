@@ -379,20 +379,13 @@ app.post("/admin/google-wallet/brand-class", async (req, res) => {
   try {
     const token = (req.get("x-admin-token") || "").trim();
     const adminToken = String(process.env.ADMIN_TOKEN || "").trim();
-    if (!adminToken || token !== adminToken) {
-      return res.status(401).json({ error: "Unauthorized" });
-    }
+    if (!adminToken || token !== adminToken) return res.status(401).json({ error: "Unauthorized" });
 
     const issuerId = String(process.env.GOOGLE_ISSUER_ID || "").trim();
-    if (!issuerId) return res.status(500).json({ error: "Missing GOOGLE_ISSUER_ID" });
-
     const classId = `${issuerId}.MembershipCard`;
     const accessToken = await getGoogleAccessToken();
 
-    const logoUri = String(process.env.OSC_LOGO_URL || "").trim(); // bear icon
-    const heroUri = String(process.env.OSC_HERO_URL || process.env.OSC_FOOTER_LOGO_URL || "").trim();
-
-   const body = {
+    const body = {
       id: classId,
       issuerName: "Odivelas Sports Club",
       reviewStatus: "UNDER_REVIEW",
@@ -401,11 +394,11 @@ app.post("/admin/google-wallet/brand-class", async (req, res) => {
         defaultValue: { language: "pt-PT", value: "ODIVELAS SPORTS CLUB" }
       },
       logo: {
-        sourceUri: { uri: logoUri },
+        sourceUri: { uri: process.env.OSC_LOGO_URL },
         contentDescription: { defaultValue: { language: "pt-PT", value: "Logo OSC" } }
       },
       heroImage: {
-        sourceUri: { uri: heroUri },
+        sourceUri: { uri: process.env.OSC_HERO_URL || process.env.OSC_FOOTER_LOGO_URL },
         contentDescription: { defaultValue: { language: "pt-PT", value: "Odivelas Sports Club" } }
       },
       classTemplateInfo: {
@@ -425,7 +418,6 @@ app.post("/admin/google-wallet/brand-class", async (req, res) => {
     };
 
     const url = `https://walletobjects.googleapis.com/walletobjects/v1/genericClass/${encodeURIComponent(classId)}`;
-
     const r = await fetch(url, {
       method: "PUT",
       headers: {
@@ -437,7 +429,6 @@ app.post("/admin/google-wallet/brand-class", async (req, res) => {
 
     const txt = await r.text();
     if (!r.ok) return res.status(r.status).send(txt);
-
     return res.json({ ok: true, classId, updated: JSON.parse(txt) });
   } catch (e) {
     return res.status(500).json({ error: String(e.message || e) });
