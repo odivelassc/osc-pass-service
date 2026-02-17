@@ -85,19 +85,17 @@ async function upsertGenericObject({ issuerId, classSuffix, objectSuffix, record
       { id: "type",         header: "Tipo",      body: "Sócio" },
       { id: "validUntil",   header: "Válido até", body: String(record.valid_until || "—") }
     ],
-    // ✅ logo now included at object level (was missing before)
+    // ✅ hexBackgroundColor at object level — takes priority over class-level color
+    hexBackgroundColor: "#000000",
+    // ✅ wideLogo = full rectangular display, no circular crop
+    // Transparent PNG recommended at 320x100px
     ...(logoUri?.startsWith("https://") && {
-      logo: {
+      wideLogo: {
         sourceUri: { uri: logoUri },
         contentDescription: { defaultValue: { language: "pt-PT", value: "OSC Logo" } }
       }
-    }),
-    ...(heroUri?.startsWith("https://") && {
-      heroImage: {
-        sourceUri: { uri: heroUri },
-        contentDescription: { defaultValue: { language: "pt-PT", value: "OSC Banner" } }
-      }
     })
+    // heroImage intentionally removed — it was overriding hexBackgroundColor with yellow
   };
 
   let r = await fetch(url, {
@@ -451,19 +449,14 @@ app.post("/admin/google-wallet/brand-class", async (req, res) => {
       cardTitle: {
         defaultValue: { language: "pt-PT", value: "ODIVELAS SPORTS CLUB" }
       },
-      // ✅ Guarded — only include if URI is valid
+      // ✅ wideLogo = full rectangular, no circular crop
       ...(logoUri?.startsWith("https://") && {
-        logo: {
+        wideLogo: {
           sourceUri: { uri: logoUri },
           contentDescription: { defaultValue: { language: "pt-PT", value: "OSC Logo" } }
         }
       }),
-      ...(heroUri?.startsWith("https://") && {
-        heroImage: {
-          sourceUri: { uri: heroUri },
-          contentDescription: { defaultValue: { language: "pt-PT", value: "OSC Banner" } }
-        }
-      }),
+      // heroImage intentionally removed — was overriding hexBackgroundColor with yellow
       classTemplateInfo: {
         cardRowTemplateInfos: [{
           threeItems: {
