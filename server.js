@@ -404,16 +404,22 @@ app.post("/admin/google-wallet/brand-class", async (req, res) => {
    const body = {
   id: classId,
   issuerName: "Odivelas Sports Club",
-  // Ensure this is exactly like this:
+  reviewStatus: "UNDER_REVIEW",
+  // 1. Force the Background Color
   hexBackgroundColor: "#000000", 
+  
+  // 2. Force the Card Title
   cardTitle: {
     defaultValue: { language: "pt-PT", value: "ODIVELAS SPORTS CLUB" }
   },
+
+  // 3. Force the Logo (The "M" killer)
   logo: {
     sourceUri: { uri: process.env.OSC_LOGO_URL },
-    contentDescription: { defaultValue: { language: "pt-PT", value: "OSC Logo" } }
+    contentDescription: { defaultValue: { language: "pt-PT", value: "Logo OSC" } }
   },
-  // This is what makes the 3 columns appear on the card face
+
+  // 4. Force the 3-Column Layout (The "Front Page" fix)
   classTemplateInfo: {
     cardRowTemplateInfos: [{
       threeItems: {
@@ -423,7 +429,8 @@ app.post("/admin/google-wallet/brand-class", async (req, res) => {
       }
     }]
   },
-  // This makes the fields appear on the "Details" screen
+
+  // 5. Force the Details Page
   textModulesData: [
     { id: "memberNumber", header: "Nº Sócio" },
     { id: "type", header: "Tipo" },
