@@ -48,24 +48,11 @@ async function getGoogleAccessToken() {
   return t.token;
 }
 
-async function upsertGenericObject({ issuerId, classSuffix, objectSuffix, record }) {
-  const accessToken = await getGoogleAccessToken();
-  const classId = `${issuerId}.${classSuffix}`;
-  const objectId = `${issuerId}.${objectSuffix}`;
-
-  const url = `https://walletobjects.googleapis.com/walletobjects/v1/genericObject/${encodeURIComponent(objectId)}`;
-
-  const body = {
-  id: objectId,
-  classId,
-  cardTitle: {
-    defaultValue: { language: "pt-PT", value: record.full_name }
-  },
-  textModulesData: [
+async function upsertGenericObject({ issuerId, classSuffix, objectSModulesData: [
     {
       id: "memberNumber",
       header: "Nº Sócio",
-      body: record.member_number
+      body: String(record.member_number || "")
     },
     {
       id: "type",
@@ -75,7 +62,7 @@ async function upsertGenericObject({ issuerId, classSuffix, objectSuffix, record
     {
       id: "validUntil",
       header: "Válido até",
-      body: record.valid_until || "—"
+      body: String(record.valid_until || "—")
     }
   ],
   logo: {
