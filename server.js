@@ -56,38 +56,41 @@ async function upsertGenericObject({ issuerId, classSuffix, objectSuffix, record
   const url = `https://walletobjects.googleapis.com/walletobjects/v1/genericObject/${encodeURIComponent(objectId)}`;
 
   const body = {
-    id: objectId,
-    classId,
-    textModulesData: [
-      {
-        id: "memberNumber",
-        header: "Nº Sócio",
-        body: record.member_number
-      },
-      {
-        id: "type",
-        header: "Tipo",
-        body: "Sócio"
-      },
-      {
-        id: "validUntil",
-        header: "Válido até",
-        body: record.valid_until || "—"
-      }
-    ],
-    logo: {
-      sourceUri: { uri: process.env.OSC_LOGO_URL || '' },
-      contentDescription: {
-        defaultValue: { language: 'pt-PT', value: 'OSC Logo' }
-      }
+  id: objectId,
+  classId,
+  cardTitle: {
+    defaultValue: { language: "pt-PT", value: record.full_name }
+  },
+  textModulesData: [
+    {
+      id: "memberNumber",
+      header: "Nº Sócio",
+      body: record.member_number
     },
-    heroImage: {
-      sourceUri: { uri: process.env.OSC_HERO_URL || '' },
-      contentDescription: {
-        defaultValue: { language: 'pt-PT', value: 'OSC Banner' }
-      }
+    {
+      id: "type",
+      header: "Tipo",
+      body: "Sócio"
+    },
+    {
+      id: "validUntil",
+      header: "Válido até",
+      body: record.valid_until || "—"
     }
-  };
+  ],
+  logo: {
+    sourceUri: { uri: process.env.OSC_LOGO_URL || '' },
+    contentDescription: {
+      defaultValue: { language: 'pt-PT', value: 'OSC Logo' }
+    }
+  },
+  heroImage: {
+    sourceUri: { uri: process.env.OSC_HERO_URL || '' },
+    contentDescription: {
+      defaultValue: { language: 'pt-PT', value: 'OSC Banner' }
+    }
+  }
+};
 
   let r = await fetch(url, {
     method: "PATCH",
