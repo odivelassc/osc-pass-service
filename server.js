@@ -389,16 +389,16 @@ app.post("/admin/google-wallet/brand-class", async (req, res) => {
       id: classId,
       issuerName: "Odivelas Sports Club",
       reviewStatus: "UNDER_REVIEW",
-      hexBackgroundColor: "#000000", 
+      hexBackgroundColor: "#000000",
       cardTitle: {
         defaultValue: { language: "pt-PT", value: "ODIVELAS SPORTS CLUB" }
       },
       logo: {
-        sourceUri: { uri: process.env.OSC_LOGO_URL },
-        contentDescription: { defaultValue: { language: "pt-PT", value: "Logo OSC" } }
+        sourceUri: { uri: logoUri },
+        contentDescription: { defaultValue: { language: "pt-PT", value: "OSC Logo" } }
       },
       heroImage: {
-        sourceUri: { uri: process.env.OSC_HERO_URL || process.env.OSC_FOOTER_LOGO_URL },
+        sourceUri: { uri: heroUri },
         contentDescription: { defaultValue: { language: "pt-PT", value: "Odivelas Sports Club" } }
       },
       classTemplateInfo: {
@@ -416,7 +416,7 @@ app.post("/admin/google-wallet/brand-class", async (req, res) => {
         { id: "validUntil", header: "Válido até" }
       ]
     };
-
+    
     const url = `https://walletobjects.googleapis.com/walletobjects/v1/genericClass/${encodeURIComponent(classId)}`;
     const r = await fetch(url, {
       method: "PUT",
