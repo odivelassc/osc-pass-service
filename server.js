@@ -29,7 +29,6 @@ function computeValidationState(record) {
   if (record.valid_until) {
     const now = new Date();
     const validUntil = new Date(record.valid_until);
-
     if (validUntil < now) {
       return { state: "EXPIRED", label: "Expirado" };
     }
@@ -39,6 +38,7 @@ function computeValidationState(record) {
 }
 
 const store = new Map();
+
 async function getGoogleAccessToken() {
   const auth = new GoogleAuth({
     scopes: ["https://www.googleapis.com/auth/wallet_object.issuer"],
@@ -48,37 +48,58 @@ async function getGoogleAccessToken() {
   return t.token;
 }
 
-async function upsertGenericObject({ issuerId, classSuffix, objectSModulesData: [
-    {
-      id: "memberNumber",
-      header: "Nº Sócio",
-      body: String(record.member_number || "")
-    },
-    {
-      id: "type",
-      header: "Tipo",
-      body: "Sócio"
-    },
-    {
-      id: "validUntil",
-      header: "Válido até",
-      body: String(record.valid_until || "—")
-    }
-  ],
-  logo: {
-    sourceUri: { uri: process.env.OSC_LOGO_URL || '' },
-    contentDescription: {
-      defaultValue: { language: 'pt-PT', value: 'OSC Logo' }
-    }
-  },
-  heroImage: {
-    sourceUri: { uri: process.env.OSC_HERO_URL || '' },
-    contentDescription: {
-      defaultValue: { language: 'pt-PT', value: 'OSC Banner' }
-    }
+// ✅ FIX 1: Function signature restored
+// ✅ FIX 2: logo field added to the object body
+// ✅ FIX 3: Image URIs guarded — only included when valid https:// URLs
+async function upsertGenericObject({ issuerId, classSuffix, objectSuffix, record }) {
+  const accessToken = await getGoogleAccessToken();
+  const classId = `${issuerId}.${classSuffix}`;
+  const objectId = `${issuerId}.${objectSuffix}`;
+
+  const url = `https://walletobjects.googleapis.com/walletobjects/v1/genericObject/${encodeURIComponent(objectId)}`;
+
+  const logoUri = process.env.OSC_LOGO_URL;
+  const heroUri = process.env.OSC_HERO_URL;
+
+  if (!logoUri || !logoUri.startsWith("https://")) {
+    console.warn("⚠️  OSC_LOGO_URL is missing or not HTTPS — logo will not render on the card");
   }
-};
-    
+  if (!heroUri || !heroUri.startsWith("https://")) {
+    console.warn("⚠️  OSC_HERO_URL is missing or not HTTPS — hero image will not render on the card");
+  }
+
+  const body = {
+    id: objectId,
+    classId,
+    state: record.status === "active" ? "ACTIVE" : "INACTIVE",
+    cardTitle: { defaultValue: { language: "pt-PT", value: "ODIVELAS SPORTS CLUB" } },
+    header: { defaultValue: { language: "pt-PT", value: record.full_name } },
+    subheader: { defaultValue: { language: "pt-PT", value: "Membro" } },
+    barcode: {
+      type: "QR_CODE",
+      value: record.qr_validation_url,
+      renderOptions: { appearance: "NON_CONFORMANT" }
+    },
+    textModulesData: [
+      { id: "memberNumber", header: "Nº Sócio", body: String(record.member_number || "") },
+      { id: "type",         header: "Tipo",      body: "Sócio" },
+      { id: "validUntil",   header: "Válido até", body: String(record.valid_until || "—") }
+    ],
+    // ✅ logo now included at object level (was missing before)
+    ...(logoUri?.startsWith("https://") && {
+      logo: {
+        sourceUri: { uri: logoUri },
+        contentDescription: { defaultValue: { language: "pt-PT", value: "OSC Logo" } }
+      }
+    }),
+    ...(heroUri?.startsWith("https://") && {
+      heroImage: {
+        sourceUri: { uri: heroUri },
+        contentDescription: { defaultValue: { language: "pt-PT", value: "OSC Banner" } }
+      }
+    })
+  };
+
   let r = await fetch(url, {
     method: "PATCH",
     headers: {
@@ -104,11 +125,17 @@ async function upsertGenericObject({ issuerId, classSuffix, objectSModulesData: 
     throw new Error(`GenericObject upsert failed: ${r.status} ${txt}`);
   }
 
+  // ✅ FIX: always return classId + objectId so the JWT URL is always generated,
+  // even when the object already existed (409) or was just patched
   return { classId, objectId };
+  // Note: 409 = already exists, which is fine — we still need the IDs for the JWT
 }
 
 function makeSaveToGoogleWalletUrl({ objectId, classId, origin }) {
   const saPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+  // ✅ FIX: clear error if credentials path is missing or file doesn't exist
+  if (!saPath) throw new Error("GOOGLE_APPLICATION_CREDENTIALS env var is not set");
+  if (!fs.existsSync(saPath)) throw new Error(`Service account file not found at: ${saPath}`);
   const sa = JSON.parse(fs.readFileSync(saPath, "utf8"));
 
   const claims = {
@@ -154,12 +181,22 @@ app.post("/api/passes/issue", async (req, res) => {
   };
 
   store.set(token, payload);
+
+  // ✅ FIX: surface the real reason google_wallet_url is null
+  let googleWalletError = null;
+
   try {
     const issuerId = process.env.GOOGLE_ISSUER_ID;
     const origin = process.env.PUBLIC_BASE_URL || "https://osc-pass-service.onrender.com";
     const classSuffix = "MembershipCard";
 
-    if (issuerId) {
+    if (!issuerId) {
+      googleWalletError = "GOOGLE_ISSUER_ID env var is not set";
+      console.warn("⚠️  " + googleWalletError);
+    } else if (!process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+      googleWalletError = "GOOGLE_APPLICATION_CREDENTIALS env var is not set";
+      console.warn("⚠️  " + googleWalletError);
+    } else {
       const { classId, objectId } = await upsertGenericObject({
         issuerId,
         classSuffix,
@@ -170,15 +207,30 @@ app.post("/api/passes/issue", async (req, res) => {
       payload.google_wallet_url = makeSaveToGoogleWalletUrl({ objectId, classId, origin });
     }
   } catch (e) {
+    googleWalletError = e.message || String(e);
     console.error("Google Wallet error:", e);
   }
-  res.json(payload);
+
+  // Include the error reason in the response so you can see it without checking logs
+  res.json({
+    ...payload,
+    ...(googleWalletError && { google_wallet_error: googleWalletError })
+  });
 });
 
+// ✅ FIX 4: Enhanced env-check with image URL validation
 app.get("/admin/env-check", (req, res) => {
+  const logoUrl  = process.env.OSC_LOGO_URL  || "";
+  const heroUrl  = process.env.OSC_HERO_URL  || "";
   res.json({
-    hasEnvAdminToken: !!process.env.ADMIN_TOKEN,
-    envLen: process.env.ADMIN_TOKEN ? String(process.env.ADMIN_TOKEN).length : 0
+    hasGoogleIssuerId:   !!process.env.GOOGLE_ISSUER_ID,
+    hasCredentials:      !!process.env.GOOGLE_APPLICATION_CREDENTIALS,
+    hasAdminToken:       !!process.env.ADMIN_TOKEN,
+    hasLogoUrl:          !!logoUrl,
+    logoUrlIsHttps:      logoUrl.startsWith("https://"),
+    hasHeroUrl:          !!heroUrl,
+    heroUrlIsHttps:      heroUrl.startsWith("https://"),
+    hasPublicBaseUrl:    !!process.env.PUBLIC_BASE_URL,
   });
 });
 
@@ -190,9 +242,9 @@ app.get("/v/:token", (req, res) => {
 
   const title = isValid ? "VÁLIDO" : "NÃO VÁLIDO";
   const subtitle =
-    state.state === "VALID" ? "Cartão ativo" :
-    state.state === "INACTIVE" ? "Cartão desativado" :
-    state.state === "EXPIRED" ? "Cartão expirado" :
+    state.state === "VALID"     ? "Cartão ativo" :
+    state.state === "INACTIVE"  ? "Cartão desativado" :
+    state.state === "EXPIRED"   ? "Cartão expirado" :
     "Cartão não encontrado";
 
   const logoUrl =
@@ -257,11 +309,7 @@ app.get("/v/:token", (req, res) => {
   <div class="wrap">
     <div class="panel">
       <div class="top">
-        ${
-          logoUrl
-            ? `<img class="brandLogo" src="${escapeHtml(logoUrl)}" alt="Odivelas Sports Club" />`
-            : ""
-        }
+        ${logoUrl ? `<img class="brandLogo" src="${escapeHtml(logoUrl)}" alt="Odivelas Sports Club" />` : ""}
       </div>
 
       <svg class="icon" viewBox="0 0 160 160" aria-hidden="true">
@@ -277,7 +325,6 @@ app.get("/v/:token", (req, res) => {
       <h1 class="title">${title}</h1>
       <div class="sub">${escapeHtml(subtitle)}</div>
       <div class="pulse"></div>
-
       <div class="hint">Validação oficial — Odivelas Sports Club</div>
     </div>
   </div>
@@ -349,7 +396,7 @@ app.get("/c/:token", async (req, res) => {
           <a class="btn" href="${escapeHtml(isAndroid && record.google_wallet_url ? record.google_wallet_url : "#")}"
              onclick="${isAndroid && record.google_wallet_url ? "" : "alert('Google Wallet ainda não está ativo para este cartão')"}">
              ${primary}
-             </a>
+          </a>
           <a class="btn secondary" href="${escapeHtml(record.qr_validation_url)}">Testar Validação</a>
 
           <div class="row">
@@ -389,51 +436,72 @@ app.post("/admin/google-wallet/brand-class", async (req, res) => {
     const logoUri = process.env.OSC_LOGO_URL;
     const heroUri = process.env.OSC_HERO_URL;
 
-    if (!logoUri || !logoUri.startsWith('https://')) {
-      console.warn('⚠️  OSC_LOGO_URL is missing or not HTTPS — logo will not render');
+    if (!logoUri || !logoUri.startsWith("https://")) {
+      console.warn("⚠️  OSC_LOGO_URL is missing or not HTTPS — logo will not render");
+    }
+    if (!heroUri || !heroUri.startsWith("https://")) {
+      console.warn("⚠️  OSC_HERO_URL is missing or not HTTPS — hero image will not render");
     }
 
     const body = {
       id: classId,
       issuerName: "Odivelas Sports Club",
-      reviewStatus: "UNDER_REVIEW",
+      // ✅ FIX 5: reviewStatus removed — only set this when intentionally submitting for review
       hexBackgroundColor: "#000000",
       cardTitle: {
         defaultValue: { language: "pt-PT", value: "ODIVELAS SPORTS CLUB" }
       },
-      logo: {
-        sourceUri: { uri: logoUri },
-        contentDescription: { defaultValue: { language: 'pt-PT', value: 'OSC Logo' } }
-      },
-      heroImage: {
-        sourceUri: { uri: heroUri },
-        contentDescription: { defaultValue: { language: 'pt-PT', value: 'OSC Banner' } }
-      },
+      // ✅ Guarded — only include if URI is valid
+      ...(logoUri?.startsWith("https://") && {
+        logo: {
+          sourceUri: { uri: logoUri },
+          contentDescription: { defaultValue: { language: "pt-PT", value: "OSC Logo" } }
+        }
+      }),
+      ...(heroUri?.startsWith("https://") && {
+        heroImage: {
+          sourceUri: { uri: heroUri },
+          contentDescription: { defaultValue: { language: "pt-PT", value: "OSC Banner" } }
+        }
+      }),
       classTemplateInfo: {
         cardRowTemplateInfos: [{
           threeItems: {
-            startItem: { firstValue: { fieldPath: "object.textModulesData['memberNumber']" } },
+            startItem:  { firstValue: { fieldPath: "object.textModulesData['memberNumber']" } },
             middleItem: { firstValue: { fieldPath: "object.textModulesData['type']" } },
-            endItem: { firstValue: { fieldPath: "object.textModulesData['validUntil']" } }
+            endItem:    { firstValue: { fieldPath: "object.textModulesData['validUntil']" } }
           }
         }]
       },
       textModulesData: [
         { id: "memberNumber", header: "Nº Sócio" },
-        { id: "type", header: "Tipo" },
-        { id: "validUntil", header: "Válido até" }
+        { id: "type",         header: "Tipo" },
+        { id: "validUntil",   header: "Válido até" }
       ]
     };
-    
+
     const url = `https://walletobjects.googleapis.com/walletobjects/v1/genericClass/${encodeURIComponent(classId)}`;
-    const r = await fetch(url, {
-      method: "PUT",
+
+    // ✅ FIX 6: PATCH-first then POST, instead of PUT (which wipes missing fields)
+    let r = await fetch(url, {
+      method: "PATCH",
       headers: {
         Authorization: `Bearer ${accessToken}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify(body),
     });
+
+    if (r.status === 404) {
+      r = await fetch("https://walletobjects.googleapis.com/walletobjects/v1/genericClass", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ ...body, reviewStatus: "UNDER_REVIEW" }),
+      });
+    }
 
     const txt = await r.text();
     if (!r.ok) return res.status(r.status).send(txt);
