@@ -446,6 +446,11 @@ app.post("/admin/google-wallet/brand-class", async (req, res) => {
     const logoUri = process.env.OSC_LOGO_URL;
     const heroUri = process.env.OSC_HERO_URL;
 
+    console.log("🔍 DEBUG - logoUri:", logoUri);
+    console.log("🔍 DEBUG - heroUri:", heroUri);
+    console.log("🔍 DEBUG - logoUri valid?", logoUri?.startsWith("https://"));
+    console.log("🔍 DEBUG - heroUri valid?", heroUri?.startsWith("https://"));
+
     if (!logoUri || !logoUri.startsWith("https://")) {
       console.warn("⚠️  OSC_LOGO_URL is missing or not HTTPS — logo will not render");
     }
@@ -496,6 +501,9 @@ app.post("/admin/google-wallet/brand-class", async (req, res) => {
         { id: "validUntil",   header: "Válido até" }
       ]
     };
+
+    console.log("🔍 DEBUG - Full body being sent to Google:");
+    console.log(JSON.stringify(body, null, 2));
 
     const url = `https://walletobjects.googleapis.com/walletobjects/v1/genericClass/${encodeURIComponent(classId)}`;
 
