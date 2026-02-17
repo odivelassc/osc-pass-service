@@ -507,24 +507,26 @@ app.post("/admin/google-wallet/brand-class", async (req, res) => {
 
     const url = `https://walletobjects.googleapis.com/walletobjects/v1/genericClass/${encodeURIComponent(classId)}`;
 
-    // ✅ FIX 6: PATCH-first then POST, instead of PUT (which wipes missing fields)
-    let r = await fetch(url, {
-      method: "PATCH",
+    // Try POST first to force full class creation with all fields
+    let r = await fetch("https://walletobjects.googleapis.com/walletobjects/v1/genericClass", {
+      method: "POST",
       headers: {
         Authorization: `Bearer ${accessToken}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(body),
+      body: JSON.stringify({ ...body, reviewStatus: "UNDER_REVIEW" }),
     });
 
-    if (r.status === 404) {
-      r = await fetch("https://walletobjects.googleapis.com/walletobjects/v1/genericClass", {
-        method: "POST",
+    // If class already exists (409), try PATCH
+    if (r.status === 409) {
+      console.log("⚠️  Class already exists, trying PATCH...");
+      r = await fetch(url, {
+        method: "PATCH",
         headers: {
           Authorization: `Bearer ${accessToken}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ ...body, reviewStatus: "UNDER_REVIEW" }),
+        body: JSON.stringify(body),
       });
     }
 
@@ -554,6 +556,35 @@ app.get("/admin/google-wallet/get-class", async (req, res) => {
 
     const txt = await r.text();
     return res.status(r.status).send(txt);
+  } catch (e) {
+    res.status(500).json({ error: String(e.message || e) });
+  }
+});
+
+app.delete("/admin/google-wallet/delete-class", async (req, res) => {
+  try {
+    const token = (req.get("x-admin-token") || "").trim();
+    if (!process.env.ADMIN_TOKEN || token !== String(process.env.ADMIN_TOKEN).trim()) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const issuerId = process.env.GOOGLE_ISSUER_ID;
+    const classId = `${issuerId}.MembershipCard`;
+    const accessToken = await getGoogleAccessToken();
+
+    const r = await fetch(
+      `https://walletobjects.googleapis.com/walletobjects/v1/genericClass/${encodeURIComponent(classId)}`,
+      { 
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${accessToken}` } 
+      }
+    );
+
+    const txt = await r.text();
+    if (!r.ok) {
+      return res.status(r.status).json({ error: txt });
+    }
+    return res.json({ ok: true, deleted: classId, response: txt });
   } catch (e) {
     res.status(500).json({ error: String(e.message || e) });
   }
