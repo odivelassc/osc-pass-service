@@ -72,39 +72,64 @@ async function upsertGenericObject({ issuerId, classSuffix, objectSuffix, record
     id: objectId,
     classId,
     state: record.status === "active" ? "ACTIVE" : "INACTIVE",
-    cardTitle: { defaultValue: { language: "pt-PT", value: "ODIVELAS SPORTS CLUB" } },
-    header: { defaultValue: { language: "pt-PT", value: record.full_name } },
-    subheader: { defaultValue: { language: "pt-PT", value: "Membro" } },
+    genericType: "GENERIC_TYPE_UNSPECIFIED",
+    // ✅ ALL visual fields belong on GenericObject for Generic passes
+    cardTitle: { 
+      defaultValue: { language: "pt-PT", value: "ODIVELAS SPORTS CLUB" } 
+    },
+    header: { 
+      defaultValue: { language: "pt-PT", value: record.full_name } 
+    },
+    subheader: { 
+      defaultValue: { language: "pt-PT", value: "Membro" } 
+    },
+    hexBackgroundColor: "#000000",
     barcode: {
       type: "QR_CODE",
       value: record.qr_validation_url,
       renderOptions: { appearance: "NON_CONFORMANT" }
     },
+    // textModulesData with id fields that match the classTemplateInfo fieldPaths
     textModulesData: [
-      { id: "memberNumber", header: "Nº Sócio", body: String(record.member_number || "") },
-      { id: "type",         header: "Tipo",      body: record.member_type || "Sócio" },
-      { id: "validUntil",   header: "Válido até", body: String(record.valid_until || "—") }
+      { 
+        id: "memberNumber", 
+        header: "Nº", 
+        body: String(record.member_number || "") 
+      },
+      { 
+        id: "type", 
+        header: "Tipo", 
+        body: record.member_type || "Sócio" 
+      },
+      { 
+        id: "validUntil", 
+        header: "Válido até", 
+        body: String(record.valid_until || "—") 
+      }
     ],
-    // ✅ hexBackgroundColor at object level — takes priority over class-level color
-    hexBackgroundColor: "#000000",
-    // Google requires both logo (circle slot) AND wideLogo (wide display)
+    // Logo and hero image - only include if valid HTTPS URLs
     ...(logoUri?.startsWith("https://") && {
       logo: {
         sourceUri: { uri: logoUri },
-        contentDescription: { defaultValue: { language: "pt-PT", value: "OSC Logo" } }
+        contentDescription: { 
+          defaultValue: { language: "pt-PT", value: "OSC Logo" } 
+        }
       }
     }),
     ...(logoUri?.startsWith("https://") && {
       wideLogo: {
         sourceUri: { uri: logoUri },
-        contentDescription: { defaultValue: { language: "pt-PT", value: "OSC Logo Wide" } }
+        contentDescription: { 
+          defaultValue: { language: "pt-PT", value: "OSC Logo Wide" } 
+        }
       }
     }),
-    // heroImage re-enabled for footer banner (now using proper transparent PNG)
     ...(heroUri?.startsWith("https://") && {
       heroImage: {
         sourceUri: { uri: heroUri },
-        contentDescription: { defaultValue: { language: "pt-PT", value: "OSC Banner" } }
+        contentDescription: { 
+          defaultValue: { language: "pt-PT", value: "OSC Banner" } 
+        }
       }
     })
   };
@@ -461,42 +486,21 @@ app.post("/admin/google-wallet/brand-class", async (req, res) => {
     const body = {
       id: classId,
       issuerName: "Odivelas Sports Club",
-      // ✅ FIX 5: reviewStatus removed — only set this when intentionally submitting for review
-      hexBackgroundColor: "#000000",
-      cardTitle: {
-        defaultValue: { language: "pt-PT", value: "ODIVELAS SPORTS CLUB" }
-      },
-      // Google requires both logo (circle slot) AND wideLogo (wide display)
-      ...(logoUri?.startsWith("https://") && {
-        logo: {
-          sourceUri: { uri: logoUri },
-          contentDescription: { defaultValue: { language: "pt-PT", value: "OSC Logo" } }
-        }
-      }),
-      ...(logoUri?.startsWith("https://") && {
-        wideLogo: {
-          sourceUri: { uri: logoUri },
-          contentDescription: { defaultValue: { language: "pt-PT", value: "OSC Logo Wide" } }
-        }
-      }),
-      // heroImage re-enabled for footer banner
-      ...(heroUri?.startsWith("https://") && {
-        heroImage: {
-          sourceUri: { uri: heroUri },
-          contentDescription: { defaultValue: { language: "pt-PT", value: "OSC Banner" } }
-        }
-      }),
+      // GenericClass only supports layout template and shared data - NO visual fields
       classTemplateInfo: {
-        cardRowTemplateInfos: [{
-          threeItems: {
-            startItem:  { firstValue: { fieldPath: "object.textModulesData['memberNumber']" } },
-            middleItem: { firstValue: { fieldPath: "object.textModulesData['type']" } },
-            endItem:    { firstValue: { fieldPath: "object.textModulesData['validUntil']" } }
-          }
-        }]
+        cardTemplateOverride: {
+          cardRowTemplateInfos: [{
+            threeItems: {
+              startItem:  { firstValue: { fields: [{ fieldPath: "object.textModulesData['memberNumber']" }] } },
+              middleItem: { firstValue: { fields: [{ fieldPath: "object.textModulesData['type']" }] } },
+              endItem:    { firstValue: { fields: [{ fieldPath: "object.textModulesData['validUntil']" }] } }
+            }
+          }]
+        }
       },
+      // Define the field metadata (headers only) at class level
       textModulesData: [
-        { id: "memberNumber", header: "Nº Sócio" },
+        { id: "memberNumber", header: "Nº" },
         { id: "type",         header: "Tipo" },
         { id: "validUntil",   header: "Válido até" }
       ]
@@ -514,7 +518,8 @@ app.post("/admin/google-wallet/brand-class", async (req, res) => {
         Authorization: `Bearer ${accessToken}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ ...body, reviewStatus: "UNDER_REVIEW" }),
+      // Try without reviewStatus - let Google default it to DRAFT
+      body: JSON.stringify(body),
     });
 
     // If class already exists (409), try PATCH
