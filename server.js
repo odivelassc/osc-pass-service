@@ -75,18 +75,19 @@ async function upsertGenericObject({ issuerId, classSuffix, objectSuffix, record
         body: record.valid_until || "—"
       }
     ],
-       logo: {
-    sourceUri: { uri: process.env.OSC_LOGO_URL },
-    contentDescription: {
-      defaultValue: { language: 'pt-PT', value: 'OSC Logo' }
+    logo: {
+      sourceUri: { uri: process.env.OSC_LOGO_URL || '' },
+      contentDescription: {
+        defaultValue: { language: 'pt-PT', value: 'OSC Logo' }
+      }
+    },
+    heroImage: {
+      sourceUri: { uri: process.env.OSC_HERO_URL || '' },
+      contentDescription: {
+        defaultValue: { language: 'pt-PT', value: 'OSC Banner' }
+      }
     }
-  },
-  heroImage: {
-    sourceUri: { uri: process.env.OSC_HERO_URL },
-    contentDescription: {
-      defaultValue: { language: 'pt-PT', value: 'OSC Banner' }
-    }
-  }
+  };
 
   let r = await fetch(url, {
     method: "PATCH",
@@ -410,18 +411,14 @@ app.post("/admin/google-wallet/brand-class", async (req, res) => {
       cardTitle: {
         defaultValue: { language: "pt-PT", value: "ODIVELAS SPORTS CLUB" }
       },
-      ...(logoUri?.startsWith('https://') && {
-        logo: {
-          sourceUri: { uri: logoUri },
-          contentDescription: { defaultValue: { language: 'pt-PT', value: 'OSC Logo' } }
-        }
-      }),
-      ...(heroUri?.startsWith('https://') && {
-        heroImage: {
-          sourceUri: { uri: heroUri },
-          contentDescription: { defaultValue: { language: 'pt-PT', value: 'OSC Banner' } }
-        }
-      }),
+      logo: {
+        sourceUri: { uri: logoUri },
+        contentDescription: { defaultValue: { language: 'pt-PT', value: 'OSC Logo' } }
+      },
+      heroImage: {
+        sourceUri: { uri: heroUri },
+        contentDescription: { defaultValue: { language: 'pt-PT', value: 'OSC Banner' } }
+      },
       classTemplateInfo: {
         cardRowTemplateInfos: [{
           threeItems: {
