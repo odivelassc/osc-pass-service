@@ -38,7 +38,6 @@ function computeValidationState(record) {
   return { state: "VALID", label: "Válido" };
 }
 
-// Phase 1: in-memory store (we'll replace with a DB later)
 const store = new Map();
 async function getGoogleAccessToken() {
   const auth = new GoogleAuth({
@@ -60,7 +59,6 @@ const body = {
   id: objectId,
   classId,
   state: record.status === "active" ? "ACTIVE" : "INACTIVE",
-  // FIX: Added cardTitle to resolve "card_title must be set" error
   cardTitle: { defaultValue: { language: "pt-PT", value: "ODIVELAS SPORTS CLUB" } },
   header: { defaultValue: { language: "pt-PT", value: record.full_name } },
   subheader: { defaultValue: { language: "pt-PT", value: "Membro" } }, 
@@ -71,7 +69,7 @@ const body = {
   },
   textModulesData: [
     { id: "memberNumber", header: "N", body: String(record.member_number) },
-    { id: "type", header: "Tipo", body: "SÓCIO FUNDADOR" }, // Updated to match your image
+    { id: "type", header: "Tipo", body: "SÓCIO FUNDADOR" },
     { id: "validUntil", header: "Válido até", body: record.valid_until || "—" }
   ],
   heroImage: {
@@ -80,7 +78,6 @@ const body = {
   }
 };
 
-  // Try PATCH (update). If 404 then create.
   let r = await fetch(url, {
     method: "PATCH",
     headers: {
@@ -101,7 +98,6 @@ const body = {
     });
   }
 
-  // 409 means "already exists" for some operations; treat as OK
   if (!r.ok && r.status !== 409) {
     const txt = await r.text();
     throw new Error(`GenericObject upsert failed: ${r.status} ${txt}`);
@@ -135,7 +131,6 @@ app.post("/api/passes/issue", async (req, res) => {
     });
   }
 
-  // Idempotent by member_id
   for (const rec of store.values()) {
     if (rec.member_id === member_id) return res.json(rec);
   }
@@ -157,11 +152,10 @@ app.post("/api/passes/issue", async (req, res) => {
   };
 
   store.set(token, payload);
-    // --- Google Wallet: create/update object + build Save URL ---
   try {
     const issuerId = process.env.GOOGLE_ISSUER_ID;
     const origin = process.env.PUBLIC_BASE_URL || "https://osc-pass-service.onrender.com";
-    const classSuffix = "MembershipCard"; // <-- from your class id
+    const classSuffix = "MembershipCard";
 
     if (issuerId) {
       const { classId, objectId } = await upsertGenericObject({
@@ -199,7 +193,6 @@ app.get("/v/:token", (req, res) => {
     state === "EXPIRED" ? "Cartão expirado" :
     "Cartão não encontrado";
 
-  // Use the FULL logo first, fallback to bear icon
   const logoUrl =
     process.env.OSC_FOOTER_LOGO_URL ||
     process.env.OSC_LOGO_URL ||
@@ -377,7 +370,6 @@ app.get("/admin/ping", (req, res) => {
     hasEnvAdminToken: !!process.env.ADMIN_TOKEN,
     headerPresent: !!req.get("x-admin-token"),
     headerPresentAlt: !!req.get("x-admin-token".toLowerCase()),
-    // shows only lengths, not the secret itself
     envLen: process.env.ADMIN_TOKEN ? String(process.env.ADMIN_TOKEN).length : 0,
     headerLen: req.get("x-admin-token") ? String(req.get("x-admin-token")).length : 0
   });
@@ -385,7 +377,6 @@ app.get("/admin/ping", (req, res) => {
 
 app.post("/admin/google-wallet/brand-class", async (req, res) => {
   try {
-    // --- Admin auth (keep simple)
     const token = (req.get("x-admin-token") || "").trim();
     const adminToken = String(process.env.ADMIN_TOKEN || "").trim();
     if (!adminToken || token !== adminToken) {
@@ -399,27 +390,20 @@ app.post("/admin/google-wallet/brand-class", async (req, res) => {
     const accessToken = await getGoogleAccessToken();
 
     const logoUri = String(process.env.OSC_LOGO_URL || "").trim(); // bear icon
-    const heroUri = String(process.env.OSC_HERO_URL || process.env.OSC_FOOTER_LOGO_URL || "").trim(); // bottom/logo banner
+    const heroUri = String(process.env.OSC_HERO_URL || process.env.OSC_FOOTER_LOGO_URL || "").trim();
 
    const body = {
   id: classId,
   issuerName: "Odivelas Sports Club",
   reviewStatus: "UNDER_REVIEW",
-  // 1. Force the Background Color
   hexBackgroundColor: "#000000", 
-  
-  // 2. Force the Card Title
-  cardTitle: {
+    cardTitle: {
     defaultValue: { language: "pt-PT", value: "ODIVELAS SPORTS CLUB" }
   },
-
-  // 3. Force the Logo (The "M" killer)
   logo: {
     sourceUri: { uri: process.env.OSC_LOGO_URL },
     contentDescription: { defaultValue: { language: "pt-PT", value: "Logo OSC" } }
   },
-
-  // 4. Force the 3-Column Layout (The "Front Page" fix)
   classTemplateInfo: {
     cardRowTemplateInfos: [{
       threeItems: {
@@ -429,8 +413,6 @@ app.post("/admin/google-wallet/brand-class", async (req, res) => {
       }
     }]
   },
-
-  // 5. Force the Details Page
   textModulesData: [
     { id: "memberNumber", header: "Nº Sócio" },
     { id: "type", header: "Tipo" },
@@ -452,7 +434,6 @@ app.post("/admin/google-wallet/brand-class", async (req, res) => {
       };
     }
 
-    // 🚀 Use PUT (overwrite) to avoid “empty patch” behavior
     const url = `https://walletobjects.googleapis.com/walletobjects/v1/genericClass/${encodeURIComponent(classId)}`;
 
     const r = await fetch(url, {
