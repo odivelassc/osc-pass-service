@@ -60,9 +60,13 @@ async function upsertGenericObject({ issuerId, classSuffix, objectSuffix, record
 
   const logoUri = process.env.OSC_LOGO_URL;
   const heroUri = process.env.OSC_HERO_URL;
+  const wideLogoUri = process.env.OSC_WIDE_LOGO_URL || logoUri; // Use dedicated wide logo or fall back to regular logo
 
   if (!logoUri || !logoUri.startsWith("https://")) {
     console.warn("⚠️  OSC_LOGO_URL is missing or not HTTPS — logo will not render on the card");
+  }
+  if (!wideLogoUri || !wideLogoUri.startsWith("https://")) {
+    console.warn("⚠️  OSC_WIDE_LOGO_URL is missing or not HTTPS — wide logo will not render");
   }
   if (!heroUri || !heroUri.startsWith("https://")) {
     console.warn("⚠️  OSC_HERO_URL is missing or not HTTPS — hero image will not render on the card");
@@ -116,9 +120,9 @@ async function upsertGenericObject({ issuerId, classSuffix, objectSuffix, record
         }
       }
     }),
-    ...(logoUri?.startsWith("https://") && {
+    ...(wideLogoUri?.startsWith("https://") && {
       wideLogo: {
-        sourceUri: { uri: logoUri },
+        sourceUri: { uri: wideLogoUri },
         contentDescription: { 
           defaultValue: { language: "pt-PT", value: "OSC Logo Wide" } 
         }
@@ -428,10 +432,18 @@ app.get("/c/:token", async (req, res) => {
 
           <div class="badge">Estado: ${escapeHtml(String(record.status).toUpperCase())}</div>
 
-          <a class="btn" href="${escapeHtml(isAndroid && record.google_wallet_url ? record.google_wallet_url : "#")}"
-             onclick="${isAndroid && record.google_wallet_url ? "" : "alert('Google Wallet ainda não está ativo para este cartão')"}">
-             ${primary}
-          </a>
+          ${record.google_wallet_url ? `
+            <a href="${escapeHtml(record.google_wallet_url)}" style="display:inline-block;margin-top:16px">
+              <img src="https://pay.google.com/gp/p/generate_button?t=save&lo=en" alt="Add to Google Wallet" style="width:200px;height:auto" />
+            </a>
+          ` : ''}
+          
+          ${record.apple_pkpass_url ? `
+            <a href="${escapeHtml(record.apple_pkpass_url)}" style="display:inline-block;margin-top:12px">
+              <img src="https://developer.apple.com/wallet/add-to-apple-wallet-guidelines/images/AddtoAppleWalletBadge.svg" alt="Add to Apple Wallet" style="width:200px;height:auto" />
+            </a>
+          ` : ''}
+
           <a class="btn secondary" href="${escapeHtml(record.qr_validation_url)}">Testar Validação</a>
 
           <div class="row">
