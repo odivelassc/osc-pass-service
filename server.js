@@ -193,12 +193,12 @@ function makeSaveToGoogleWalletUrl({ objectId, classId, origin }) {
 
 async function generateApplePass(record) {
   const certPath = process.env.APPLE_PASS_CERT_PATH;
-  const certPassword = process.env.APPLE_PASS_CERT_PASSWORD;
+  const keyPath = process.env.APPLE_PASS_KEY_PATH;
   const wwdrPath = process.env.APPLE_WWDR_CERT_PATH;
   const passTypeId = process.env.APPLE_PASS_TYPE_ID;
   const teamId = process.env.APPLE_TEAM_ID;
 
-  if (!certPath || !certPassword || !wwdrPath || !passTypeId || !teamId) {
+  if (!certPath || !keyPath || !wwdrPath || !passTypeId || !teamId) {
     throw new Error("Missing Apple Wallet configuration in environment variables");
   }
 
@@ -211,14 +211,11 @@ async function generateApplePass(record) {
       "serialNumber": record.token,
       "backgroundColor": "rgb(0, 0, 0)",           // Black background
       "foregroundColor": "rgb(255, 255, 255)",     // White text
-      "labelColor": "rgb(255, 255, 255)"           // White labels (no yellow)
+      "labelColor": "rgb(255, 255, 255)"           // White labels
     },
     {
       signerCert: fs.readFileSync(certPath),
-      signerKey: {
-        keyFile: fs.readFileSync(certPath),
-        passphrase: certPassword
-      },
+      signerKey: fs.readFileSync(keyPath),
       wwdr: fs.readFileSync(wwdrPath)
     }
   );
@@ -659,13 +656,13 @@ app.get("/c/:token", async (req, res) => {
   <div class="wallet-buttons">
     ${record.google_wallet_url ? `
       <a href="${escapeHtml(record.google_wallet_url)}">
-        <img src="https://developers.google.com/static/wallet/images/add_to_google_wallet_button.svg" alt="Add to Google Wallet" />
+        <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/b/bb/Add_to_Google_Wallet_badge.svg/1280px-Add_to_Google_Wallet_badge.svg.png" alt="Add to Google Wallet" />
       </a>
     ` : ''}
     
     ${record.apple_pkpass_url ? `
       <a href="${escapeHtml(record.apple_pkpass_url)}">
-        <img src="https://developer.apple.com/assets/elements/badges/download-on-the-app-store.svg" alt="Add to Apple Wallet" style="height: 50px;" />
+        <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/3/30/Add_to_Apple_Wallet_badge.svg/1280px-Add_to_Apple_Wallet_badge.svg.png" alt="Add to Apple Wallet" />
       </a>
     ` : ''}
   </div>
