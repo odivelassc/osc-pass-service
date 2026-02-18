@@ -202,45 +202,45 @@ async function generateApplePass(record) {
     throw new Error("Missing Apple Wallet configuration in environment variables");
   }
 
-  const pass = new PKPass(
+  // Create the pass with all required properties
+  const pass = await PKPass.from(
     {
-      "passTypeIdentifier": passTypeId,
-      "teamIdentifier": teamId,
-      "organizationName": "Odivelas Sports Club",
-      "description": "Cartão de Sócio",
-      "serialNumber": record.token,
-      "backgroundColor": "rgb(0, 0, 0)",           // Black background
-      "foregroundColor": "rgb(255, 255, 255)",     // White text
-      "labelColor": "rgb(255, 255, 255)"           // White labels
-    },
-    {
-      signerCert: fs.readFileSync(certPath),
-      signerKey: fs.readFileSync(keyPath),
-      wwdr: fs.readFileSync(wwdrPath)
+      model: {}, // Empty model, we'll set everything programmatically
+      certificates: {
+        wwdr: fs.readFileSync(wwdrPath),
+        signerCert: fs.readFileSync(certPath),
+        signerKey: fs.readFileSync(keyPath)
+      }
     }
   );
 
-  // Set pass structure for membership/store card
+  // Set required top-level properties
   pass.type = "storeCard";
-  
-  // Logo text (top-left, appears next to logo image)
+  pass.passTypeIdentifier = passTypeId;
+  pass.teamIdentifier = teamId;
+  pass.organizationName = "Odivelas Sports Club";
+  pass.description = "Cartão de Sócio";
+  pass.serialNumber = record.token;
+  pass.backgroundColor = "rgb(0, 0, 0)";
+  pass.foregroundColor = "rgb(255, 255, 255)";
+  pass.labelColor = "rgb(255, 255, 255)";
   pass.logoText = "ODIVELAS SPORTS CLUB";
 
-  // Header fields (top right)
+  // Header fields
   pass.headerFields.push({
     key: "member-status",
     label: "ESTADO",
     value: record.status === "active" ? "ATIVO" : "INATIVO"
   });
 
-  // Primary fields (large, center - member name)
+  // Primary fields
   pass.primaryFields.push({
     key: "member-name",
     label: "MEMBRO",
     value: record.full_name
   });
 
-  // Secondary fields (row below primary - matching Google Wallet 3-column layout)
+  // Secondary fields (3-column row)
   pass.secondaryFields.push(
     {
       key: "member-number",
@@ -262,10 +262,7 @@ async function generateApplePass(record) {
     }
   );
 
-  // Auxiliary fields removed - no redundant "Clube: Odivelas Sports Club"
-  // Footer image will show branding instead
-
-  // Back fields (shown when flipped)
+  // Back fields
   pass.backFields.push(
     {
       key: "full-name",
@@ -289,40 +286,44 @@ async function generateApplePass(record) {
     }
   );
 
-  // Add barcode (QR code for validation)
-  pass.barcodes = [{
+  // Barcode
+  pass.setBarcodes({
     format: "PKBarcodeFormatQR",
     message: record.qr_validation_url,
     messageEncoding: "iso-8859-1",
     altText: `Nº ${record.member_number}`
-  }];
+  });
 
-  // Add logos if available
+  // Add logos - REQUIRED
   const logoPath = process.env.APPLE_PASS_LOGO_PATH;
   const iconPath = process.env.APPLE_PASS_ICON_PATH || logoPath;
   const stripPath = process.env.APPLE_PASS_STRIP_PATH;
-  const footerPath = process.env.APPLE_PASS_FOOTER_PATH; // Footer image below QR code
+  const footerPath = process.env.APPLE_PASS_FOOTER_PATH;
 
-  if (logoPath && fs.existsSync(logoPath)) {
-    pass.addBuffer("logo.png", fs.readFileSync(logoPath));
-    pass.addBuffer("logo@2x.png", fs.readFileSync(logoPath));
-    pass.addBuffer("logo@3x.png", fs.readFileSync(logoPath));
+  if (!logoPath || !fs.existsSync(logoPath)) {
+    throw new Error(`Logo file not found at: ${logoPath}. Apple Wallet requires a logo.`);
   }
 
+  // Add logo (required)
+  pass.addBuffer("logo.png", fs.readFileSync(logoPath));
+  pass.addBuffer("logo@2x.png", fs.readFileSync(logoPath));
+  pass.addBuffer("logo@3x.png", fs.readFileSync(logoPath));
+
+  // Add icon (required for wallet list view)
   if (iconPath && fs.existsSync(iconPath)) {
     pass.addBuffer("icon.png", fs.readFileSync(iconPath));
     pass.addBuffer("icon@2x.png", fs.readFileSync(iconPath));
     pass.addBuffer("icon@3x.png", fs.readFileSync(iconPath));
   }
 
-  // Strip image (wide banner at top, optional)
+  // Strip image (optional)
   if (stripPath && fs.existsSync(stripPath)) {
     pass.addBuffer("strip.png", fs.readFileSync(stripPath));
     pass.addBuffer("strip@2x.png", fs.readFileSync(stripPath));
     pass.addBuffer("strip@3x.png", fs.readFileSync(stripPath));
   }
 
-  // Footer image (banner below QR code - your "ODIVELAS SPORTS CLUB" footer)
+  // Footer image (optional)
   if (footerPath && fs.existsSync(footerPath)) {
     pass.addBuffer("footer.png", fs.readFileSync(footerPath));
     pass.addBuffer("footer@2x.png", fs.readFileSync(footerPath));
