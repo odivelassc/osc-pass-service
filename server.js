@@ -893,7 +893,8 @@ app.get("/apple/:token.pkpass", async (req, res) => {
     const pkpassBuffer = await generateApplePass(record);
     
     res.setHeader("Content-Type", "application/vnd.apple.pkpass");
-    res.setHeader("Content-Disposition", `attachment; filename="OSC_Member_${record.member_number}.pkpass"`);
+    // Use 'inline' so iPhone Safari opens directly in Wallet instead of downloading
+    res.setHeader("Content-Disposition", `inline; filename="OSC_Member_${record.member_number}.pkpass"`);
     res.send(pkpassBuffer);
   } catch (error) {
     console.error("Apple Pass generation error:", error);
