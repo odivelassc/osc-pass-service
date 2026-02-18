@@ -308,13 +308,12 @@ function makeSaveToGoogleWalletUrl({ objectId, classId, origin }) {
 }
 
 async function generateApplePass(record) {
-  const crypto = require('crypto');
+  const { execSync } = require('child_process');
   const archiver = require('archiver');
-  const { Readable } = require('stream');
   
-  const certPath = process.env.APPLE_PASS_CERT_PATH;
-  const keyPath = process.env.APPLE_PASS_KEY_PATH;
-  const wwdrPath = process.env.APPLE_WWDR_CERT_PATH;
+  const certPath = process.env.APPLE_PASS_CERT_PATH; // signerCert.pem
+  const keyPath = process.env.APPLE_PASS_KEY_PATH;   // signerKey.pem
+  const wwdrPath = process.env.APPLE_WWDR_CERT_PATH; // wwdr.pem
   const passTypeId = process.env.APPLE_PASS_TYPE_ID;
   const teamId = process.env.APPLE_TEAM_ID;
 
@@ -322,132 +321,138 @@ async function generateApplePass(record) {
     throw new Error("Missing Apple Wallet configuration");
   }
 
-  // Create pass.json manually
-  const passJson = {
-    formatVersion: 1,
-    passTypeIdentifier: passTypeId,
-    teamIdentifier: teamId,
-    organizationName: "Odivelas Sports Club",
-    serialNumber: record.token,
-    description: "Cartão de Sócio",
-    backgroundColor: "rgb(0, 0, 0)",
-    foregroundColor: "rgb(255, 255, 255)",
-    labelColor: "rgb(255, 255, 255)",
-    logoText: "ODIVELAS SPORTS CLUB",
-    storeCard: {
-      headerFields: [{
-        key: "member-status",
-        label: "ESTADO",
-        value: record.status === "active" ? "ATIVO" : "INATIVO"
-      }],
-      primaryFields: [{
-        key: "member-name",
-        label: "MEMBRO",
-        value: record.full_name
-      }],
-      secondaryFields: [
-        {
-          key: "member-number",
-          label: "Nº",
-          value: String(record.member_number),
-          textAlignment: "PKTextAlignmentLeft"
-        },
-        {
-          key: "member-type",
-          label: "Tipo",
-          value: record.member_type || "Sócio",
-          textAlignment: "PKTextAlignmentCenter"
-        },
-        {
-          key: "valid-until",
-          label: "Válido até",
-          value: record.valid_until || "—",
-          textAlignment: "PKTextAlignmentRight"
-        }
-      ],
-      backFields: [
-        {
-          key: "full-name",
-          label: "NOME COMPLETO",
-          value: record.full_name
-        },
-        {
-          key: "member-id",
-          label: "ID DE MEMBRO",
-          value: record.member_id
-        },
-        {
-          key: "card-url",
-          label: "CARTÃO DIGITAL",
-          value: record.card_public_url
-        },
-        {
-          key: "validation-url",
-          label: "URL DE VALIDAÇÃO",
-          value: record.qr_validation_url
-        }
-      ]
-    },
-    barcode: {
-      format: "PKBarcodeFormatQR",
-      message: record.qr_validation_url,
-      messageEncoding: "iso-8859-1",
-      altText: `Nº ${record.member_number}`
-    }
-  };
-
-  const passJsonStr = JSON.stringify(passJson, null, 2);
+  // Create unique temp directory for this pass
+  const tempDir = `/tmp/pass-${record.token}-${Date.now()}`;
   
-  // Create manifest with SHA1 hashes
-  const manifest = {
-    "pass.json": crypto.createHash('sha1').update(passJsonStr).digest('hex')
-  };
+  try {
+    // Create temp directory
+    execSync(`mkdir -p ${tempDir}`);
 
-  // Add logo if available
-  const logoPath = process.env.APPLE_PASS_LOGO_PATH;
-  if (logoPath && fs.existsSync(logoPath)) {
-    const logoData = fs.readFileSync(logoPath);
-    manifest["logo.png"] = crypto.createHash('sha1').update(logoData).digest('hex');
-    manifest["logo@2x.png"] = manifest["logo.png"];
-    manifest["icon.png"] = manifest["logo.png"];
-    manifest["icon@2x.png"] = manifest["logo.png"];
-  }
+    // Create pass.json matching C# structure exactly
+    const passJson = {
+      formatVersion: 1,
+      passTypeIdentifier: passTypeId,
+      teamIdentifier: teamId,
+      organizationName: "Odivelas Sports Club",
+      serialNumber: record.token,
+      description: "Odivelas Sports Club - Membership Card",
+      logoText: "Odivelas Sports Club",
+      backgroundColor: "#000000",
+      labelColor: "#fae442",  // Yellow like C#
+      foregroundColor: "#ffffff",
+      storeCard: {
+        headerFields: [{
+          key: "number",
+          label: "Number",
+          value: String(record.member_number)
+        }],
+        secondaryFields: [
+          {
+            key: "member",
+            label: "Member",
+            value: record.full_name
+          },
+          {
+            key: "card-type",
+            label: "Type",
+            value: record.member_type || "Sócio"
+          },
+          {
+            key: "valid-until",
+            label: "Valid until",
+            value: record.valid_until || "—"
+          }
+        ]
+      },
+      barcode: {
+        format: "PKBarcodeFormatQR",
+        message: record.qr_validation_url,
+        messageEncoding: "iso-8859-1"
+      }
+    };
 
-  const manifestStr = JSON.stringify(manifest, null, 2);
+    const passJsonStr = JSON.stringify(passJson);
+    fs.writeFileSync(`${tempDir}/pass.json`, passJsonStr);
 
-  // Sign the manifest
-  const certData = fs.readFileSync(certPath, 'utf8');
-  const keyData = fs.readFileSync(keyPath, 'utf8');
-  const wwdrData = fs.readFileSync(wwdrPath, 'utf8');
+    // Create manifest with SHA1 hashes
+    const manifest = {
+      "pass.json": crypto.createHash('sha1').update(passJsonStr).digest('hex')
+    };
 
-  const signer = crypto.createSign('sha1');
-  signer.update(manifestStr);
-  const signature = signer.sign(keyData);
-
-  // Create the .pkpass zip
-  return new Promise((resolve, reject) => {
-    const archive = archiver('zip', { zlib: { level: 9 } });
-    const chunks = [];
-    
-    archive.on('data', chunk => chunks.push(chunk));
-    archive.on('end', () => resolve(Buffer.concat(chunks)));
-    archive.on('error', reject);
-
-    // Add files to archive
-    archive.append(passJsonStr, { name: 'pass.json' });
-    archive.append(manifestStr, { name: 'manifest.json' });
-    archive.append(signature, { name: 'signature' });
-
+    // Add logo/icon if available
+    const logoPath = process.env.APPLE_PASS_LOGO_PATH;
     if (logoPath && fs.existsSync(logoPath)) {
       const logoData = fs.readFileSync(logoPath);
-      archive.append(logoData, { name: 'logo.png' });
-      archive.append(logoData, { name: 'logo@2x.png' });
-      archive.append(logoData, { name: 'icon.png' });
-      archive.append(logoData, { name: 'icon@2x.png' });
+      fs.writeFileSync(`${tempDir}/icon.png`, logoData);
+      fs.writeFileSync(`${tempDir}/icon@2x.png`, logoData);
+      manifest["icon.png"] = crypto.createHash('sha1').update(logoData).digest('hex');
+      manifest["icon@2x.png"] = manifest["icon.png"];
     }
 
-    archive.finalize();
-  });
+    // Add strip if available
+    const stripPath = process.env.APPLE_PASS_STRIP_PATH;
+    if (stripPath && fs.existsSync(stripPath)) {
+      const stripData = fs.readFileSync(stripPath);
+      fs.writeFileSync(`${tempDir}/strip.png`, stripData);
+      fs.writeFileSync(`${tempDir}/strip@2x.png`, stripData);
+      manifest["strip.png"] = crypto.createHash('sha1').update(stripData).digest('hex');
+      manifest["strip@2x.png"] = manifest["strip.png"];
+    }
+
+    const manifestStr = JSON.stringify(manifest);
+    fs.writeFileSync(`${tempDir}/manifest.json`, manifestStr);
+
+    // Sign manifest using OpenSSL SMIME (PKCS7) - this is what Apple requires
+    execSync(`openssl smime -binary -sign \\
+      -certfile "${wwdrPath}" \\
+      -signer "${certPath}" \\
+      -inkey "${keyPath}" \\
+      -in "${tempDir}/manifest.json" \\
+      -out "${tempDir}/signature" \\
+      -outform DER`);
+
+    // Create .pkpass zip file
+    return new Promise((resolve, reject) => {
+      const archive = archiver('zip', { zlib: { level: 9 } });
+      const chunks = [];
+      
+      archive.on('data', chunk => chunks.push(chunk));
+      archive.on('end', () => {
+        // Cleanup
+        execSync(`rm -rf ${tempDir}`);
+        resolve(Buffer.concat(chunks));
+      });
+      archive.on('error', (err) => {
+        execSync(`rm -rf ${tempDir}`);
+        reject(err);
+      });
+
+      // Add all files from temp directory
+      archive.file(`${tempDir}/pass.json`, { name: 'pass.json' });
+      archive.file(`${tempDir}/manifest.json`, { name: 'manifest.json' });
+      archive.file(`${tempDir}/signature`, { name: 'signature' });
+      
+      if (fs.existsSync(`${tempDir}/icon.png`)) {
+        archive.file(`${tempDir}/icon.png`, { name: 'icon.png' });
+        archive.file(`${tempDir}/icon@2x.png`, { name: 'icon@2x.png' });
+      }
+      
+      if (fs.existsSync(`${tempDir}/strip.png`)) {
+        archive.file(`${tempDir}/strip.png`, { name: 'strip.png' });
+        archive.file(`${tempDir}/strip@2x.png`, { name: 'strip@2x.png' });
+      }
+
+      archive.finalize();
+    });
+  } catch (error) {
+    // Cleanup on error
+    try {
+      execSync(`rm -rf ${tempDir}`);
+    } catch (e) {
+      // Ignore cleanup errors
+    }
+    throw error;
+  }
 }
 
 app.post("/api/passes/issue", async (req, res) => {
