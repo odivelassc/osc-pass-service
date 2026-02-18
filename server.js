@@ -202,29 +202,25 @@ async function generateApplePass(record) {
     throw new Error("Missing Apple Wallet configuration in environment variables");
   }
 
-  // Create the pass with all required properties
-  const pass = await PKPass.from(
-    {
-      model: {}, // Empty model, we'll set everything programmatically
-      certificates: {
-        wwdr: fs.readFileSync(wwdrPath),
-        signerCert: fs.readFileSync(certPath),
-        signerKey: fs.readFileSync(keyPath)
-      }
-    }
-  );
+  // Initialize pass with basic structure
+  const pass = new PKPass({
+    passTypeIdentifier: passTypeId,
+    teamIdentifier: teamId,
+    organizationName: "Odivelas Sports Club",
+    description: "Cartão de Sócio",
+    serialNumber: record.token,
+    backgroundColor: "rgb(0, 0, 0)",
+    foregroundColor: "rgb(255, 255, 255)",
+    labelColor: "rgb(255, 255, 255)",
+    logoText: "ODIVELAS SPORTS CLUB"
+  }, {
+    wwdr: fs.readFileSync(wwdrPath),
+    signerCert: fs.readFileSync(certPath),
+    signerKey: fs.readFileSync(keyPath)
+  });
 
-  // Set required top-level properties
+  // Set pass type
   pass.type = "storeCard";
-  pass.passTypeIdentifier = passTypeId;
-  pass.teamIdentifier = teamId;
-  pass.organizationName = "Odivelas Sports Club";
-  pass.description = "Cartão de Sócio";
-  pass.serialNumber = record.token;
-  pass.backgroundColor = "rgb(0, 0, 0)";
-  pass.foregroundColor = "rgb(255, 255, 255)";
-  pass.labelColor = "rgb(255, 255, 255)";
-  pass.logoText = "ODIVELAS SPORTS CLUB";
 
   // Header fields
   pass.headerFields.push({
