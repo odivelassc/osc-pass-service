@@ -3,6 +3,7 @@ const { v4: uuidv4 } = require("uuid");
 const QRCode = require("qrcode");
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 const jwt = require("jsonwebtoken");
 const { GoogleAuth } = require("google-auth-library");
 const { fetch } = require("undici");
@@ -18,6 +19,118 @@ function escapeHtml(str) {
     '"': "&quot;",
     "'": "&#039;"
   }[m]));
+}
+
+
+function base32Encode(buffer) {
+  const base32Chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  let bits = 0;
+  let value = 0;
+  let output = '';
+  
+  for (let i = 0; i < buffer.length; i++) {
+    value = (value << 8) | buffer[i];
+    bits += 8;
+    
+    while (bits >= 5) {
+      output += base32Chars[(value >>> (bits - 5)) & 31];
+      bits -= 5;
+    }
+  }
+  
+  if (bits > 0) {
+    output += base32Chars[(value << (5 - bits)) & 31];
+  }
+  
+  return output;
+}
+
+function generateTOTPSecret() {
+  return base32Encode(crypto.randomBytes(20));
+}
+
+function generateTOTP(secret, timeStep = 30, digits = 6) {
+  const base32Chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  let bits = 0;
+  let value = 0;
+  const bytes = [];
+  
+  for (let i = 0; i < secret.length; i++) {
+    const idx = base32Chars.indexOf(secret[i].toUpperCase());
+    if (idx === -1) continue;
+    
+    value = (value << 5) | idx;
+    bits += 5;
+    
+    if (bits >= 8) {
+      bytes.push((value >>> (bits - 8)) & 255);
+      bits -= 8;
+    }
+  }
+  
+  const key = Buffer.from(bytes);
+  const time = Math.floor(Date.now() / 1000 / timeStep);
+  const timeBuffer = Buffer.alloc(8);
+  timeBuffer.writeBigUInt64BE(BigInt(time));
+  
+  const hmac = crypto.createHmac('sha1', key);
+  hmac.update(timeBuffer);
+  const hash = hmac.digest();
+  
+  const offset = hash[hash.length - 1] & 0xf;
+  const code = (
+    ((hash[offset] & 0x7f) << 24) |
+    ((hash[offset + 1] & 0xff) << 16) |
+    ((hash[offset + 2] & 0xff) << 8) |
+    (hash[offset + 3] & 0xff)
+  ) % Math.pow(10, digits);
+  
+  return String(code).padStart(digits, '0');
+}
+
+function verifyTOTP(secret, token, window = 1) {
+  for (let i = -window; i <= window; i++) {
+    const timeStep = Math.floor(Date.now() / 1000 / 30) + i;
+    const timeBuffer = Buffer.alloc(8);
+    timeBuffer.writeBigUInt64BE(BigInt(timeStep));
+    
+    const base32Chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+    let bits = 0;
+    let value = 0;
+    const bytes = [];
+    
+    for (let j = 0; j < secret.length; j++) {
+      const idx = base32Chars.indexOf(secret[j].toUpperCase());
+      if (idx === -1) continue;
+      
+      value = (value << 5) | idx;
+      bits += 5;
+      
+      if (bits >= 8) {
+        bytes.push((value >>> (bits - 8)) & 255);
+        bits -= 8;
+      }
+    }
+    
+    const key = Buffer.from(bytes);
+    const hmac = crypto.createHmac('sha1', key);
+    hmac.update(timeBuffer);
+    const hash = hmac.digest();
+    
+    const offset = hash[hash.length - 1] & 0xf;
+    const code = (
+      ((hash[offset] & 0x7f) << 24) |
+      ((hash[offset + 1] & 0xff) << 16) |
+      ((hash[offset + 2] & 0xff) << 8) |
+      (hash[offset + 3] & 0xff)
+    ) % 1000000;
+    
+    if (String(code).padStart(6, '0') === token) {
+      return true;
+    }
+  }
+  
+  return false;
 }
 
 function computeValidationState(record) {
@@ -49,9 +162,6 @@ async function getGoogleAccessToken() {
   return t.token;
 }
 
-// ✅ FIX 1: Function signature restored
-// ✅ FIX 2: logo field added to the object body
-// ✅ FIX 3: Image URIs guarded — only included when valid https:// URLs
 async function upsertGenericObject({ issuerId, classSuffix, objectSuffix, record }) {
   const accessToken = await getGoogleAccessToken();
   const classId = `${issuerId}.${classSuffix}`;
@@ -61,7 +171,7 @@ async function upsertGenericObject({ issuerId, classSuffix, objectSuffix, record
 
   const logoUri = process.env.OSC_LOGO_URL;
   const heroUri = process.env.OSC_HERO_URL;
-  const wideLogoUri = process.env.OSC_WIDE_LOGO_URL || logoUri; // Use dedicated wide logo or fall back to regular logo
+  const wideLogoUri = process.env.OSC_WIDE_LOGO_URL || logoUri;
 
   if (!logoUri || !logoUri.startsWith("https://")) {
     console.warn("⚠️  OSC_LOGO_URL is missing or not HTTPS — logo will not render on the card");
@@ -78,7 +188,7 @@ async function upsertGenericObject({ issuerId, classSuffix, objectSuffix, record
     classId,
     state: record.status === "active" ? "ACTIVE" : "INACTIVE",
     genericType: "GENERIC_TYPE_UNSPECIFIED",
-    // ✅ ALL visual fields belong on GenericObject for Generic passes
+  
     cardTitle: { 
       defaultValue: { language: "pt-PT", value: "ODIVELAS SPORTS CLUB" } 
     },
@@ -94,7 +204,7 @@ async function upsertGenericObject({ issuerId, classSuffix, objectSuffix, record
       value: record.qr_validation_url,
       renderOptions: { appearance: "NON_CONFORMANT" }
     },
-    // textModulesData with id fields that match the classTemplateInfo fieldPaths
+ 
     textModulesData: [
       { 
         id: "memberNumber", 
@@ -112,7 +222,7 @@ async function upsertGenericObject({ issuerId, classSuffix, objectSuffix, record
         body: String(record.valid_until || "—") 
       }
     ],
-    // Logo and hero image - only include if valid HTTPS URLs
+  
     ...(logoUri?.startsWith("https://") && {
       logo: {
         sourceUri: { uri: logoUri },
@@ -205,7 +315,6 @@ async function generateApplePass(record) {
     throw new Error("Missing Apple Wallet configuration");
   }
 
-  // Create pass.json manually
   const passJson = {
     formatVersion: 1,
     passTypeIdentifier: passTypeId,
@@ -281,12 +390,10 @@ async function generateApplePass(record) {
 
   const passJsonStr = JSON.stringify(passJson, null, 2);
   
-  // Create manifest with SHA1 hashes
   const manifest = {
     "pass.json": crypto.createHash('sha1').update(passJsonStr).digest('hex')
   };
 
-  // Add logo if available
   const logoPath = process.env.APPLE_PASS_LOGO_PATH;
   if (logoPath && fs.existsSync(logoPath)) {
     const logoData = fs.readFileSync(logoPath);
@@ -316,7 +423,6 @@ async function generateApplePass(record) {
     archive.on('end', () => resolve(Buffer.concat(chunks)));
     archive.on('error', reject);
 
-    // Add files to archive
     archive.append(passJsonStr, { name: 'pass.json' });
     archive.append(manifestStr, { name: 'manifest.json' });
     archive.append(signature, { name: 'signature' });
@@ -342,16 +448,19 @@ app.post("/api/passes/issue", async (req, res) => {
     });
   }
 
-  // Check if member already exists - if so, update their data
+  // Check if member already exists - if so, update their data but keep TOTP secret
   let existingToken = null;
+  let existingTotpSecret = null;
   for (const [token, rec] of store.entries()) {
     if (rec.member_id === member_id) {
       existingToken = token;
+      existingTotpSecret = rec.totp_secret; // Preserve existing TOTP secret
       break;
     }
   }
 
   const token = existingToken || uuidv4().replaceAll("-", "");
+  const totpSecret = existingTotpSecret || generateTOTPSecret(); // Generate new secret only for new members
   const baseUrl = process.env.PUBLIC_BASE_URL || `http://localhost:${process.env.PORT || 3000}`;
 
   const payload = {
@@ -362,8 +471,9 @@ app.post("/api/passes/issue", async (req, res) => {
     member_type: member_type || "Sócio",
     valid_until: valid_until || null,
     status: status || "active",
+    totp_secret: totpSecret, // Store TOTP secret
     card_public_url: `${baseUrl}/c/${token}`,
-    qr_validation_url: `${baseUrl}/v/${token}`,
+    qr_validation_url: `${baseUrl}/v/${token}`, // This will now generate dynamic codes
     apple_pkpass_url: null,
     google_wallet_url: null
   };
@@ -429,15 +539,31 @@ app.get("/admin/env-check", (req, res) => {
 
 app.get("/v/:token", (req, res) => {
   const record = store.get(req.params.token);
+  const totpCode = req.query.code; // Get TOTP code from query parameter
 
-  const state = computeValidationState(record);
-  const isValid = state.state === "VALID";
+  let state = computeValidationState(record);
+  let isValid = state.state === "VALID";
+  
+  // If TOTP code is provided, verify it
+  if (totpCode && record && record.totp_secret) {
+    const totpValid = verifyTOTP(record.totp_secret, totpCode);
+    if (!totpValid) {
+      state = { state: "INVALID_TOTP", label: "Código expirado" };
+      isValid = false;
+    }
+  } else if (!totpCode && record) {
+    // No TOTP code provided but record exists - show warning
+    state = { state: "NO_CODE", label: "Código necessário" };
+    isValid = false;
+  }
 
   const title = isValid ? "VÁLIDO" : "NÃO VÁLIDO";
   const subtitle =
-    state.state === "VALID"     ? "Cartão ativo" :
-    state.state === "INACTIVE"  ? "Cartão desativado" :
-    state.state === "EXPIRED"   ? "Cartão expirado" :
+    state.state === "VALID"        ? "Cartão ativo" :
+    state.state === "INVALID_TOTP" ? "Código de segurança expirado" :
+    state.state === "NO_CODE"      ? "Escaneie o QR code do cartão" :
+    state.state === "INACTIVE"     ? "Cartão desativado" :
+    state.state === "EXPIRED"      ? "Cartão expirado" :
     "Cartão não encontrado";
 
   const logoUrl =
@@ -537,7 +663,14 @@ app.get("/c/:token", async (req, res) => {
   const record = store.get(req.params.token);
   if (!record) return res.status(404).send("Card not found");
 
-  const qrDataUrl = await QRCode.toDataURL(record.qr_validation_url);
+  // Generate current TOTP code
+  const currentTOTP = record.totp_secret ? generateTOTP(record.totp_secret) : '';
+  
+  // Create validation URL with TOTP code
+  const validationUrlWithTOTP = `${record.qr_validation_url}?code=${currentTOTP}`;
+  
+  // Generate QR code with TOTP
+  const qrDataUrl = await QRCode.toDataURL(validationUrlWithTOTP);
   const logoUrl = process.env.OSC_LOGO_URL || "";
 
   res.setHeader("Content-Type", "text/html; charset=utf-8");
@@ -693,15 +826,47 @@ app.get("/c/:token", async (req, res) => {
   </div>
   
   <div class="qr-section">
-    <img src="${qrDataUrl}" alt="QR Code de Validação" />
+    <img id="qrCode" src="${qrDataUrl}" alt="QR Code de Validação" />
+    <p style="color: #999; font-size: 12px; margin-top: 8px;">
+      Código renova a cada 30 segundos
+    </p>
   </div>
   
   <p class="footer-note">
     Adicione este cartão à sua carteira digital para acesso rápido e validação em eventos do clube.
   </p>
+  
+  <script>
+    // Auto-refresh QR code every 30 seconds with new TOTP
+    setInterval(async () => {
+      try {
+        const response = await fetch('/c/${record.token}/qr');
+        const data = await response.json();
+        document.getElementById('qrCode').src = data.qrDataUrl;
+      } catch (error) {
+        console.error('Failed to refresh QR code:', error);
+      }
+    }, 30000); // 30 seconds
+  </script>
 </body>
 </html>
   `);
+});
+
+app.get("/c/:token/qr", async (req, res) => {
+  const record = store.get(req.params.token);
+  if (!record) return res.status(404).json({ error: "Card not found" });
+
+  // Generate current TOTP code
+  const currentTOTP = record.totp_secret ? generateTOTP(record.totp_secret) : '';
+  
+  // Create validation URL with TOTP code
+  const validationUrlWithTOTP = `${record.qr_validation_url}?code=${currentTOTP}`;
+  
+  // Generate QR code
+  const qrDataUrl = await QRCode.toDataURL(validationUrlWithTOTP);
+  
+  res.json({ qrDataUrl, expiresIn: 30 });
 });
 
 app.get("/apple/:token.pkpass", async (req, res) => {
