@@ -535,82 +535,169 @@ app.get("/c/:token", async (req, res) => {
   if (!record) return res.status(404).send("Card not found");
 
   const qrDataUrl = await QRCode.toDataURL(record.qr_validation_url);
-
-  const ua = (req.headers["user-agent"] || "").toLowerCase();
-  const isAndroid = ua.includes("android");
-  const isIOS = ua.includes("iphone") || ua.includes("ipad") || ua.includes("ipod");
-
-  const primary = isIOS ? "Apple Wallet" : isAndroid ? "Google Wallet" : "Escolher Wallet";
+  const logoUrl = process.env.OSC_LOGO_URL || "";
 
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.send(`
-    <html>
-      <head>
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <title>Cartão de Sócio - Odivelas SC</title>
-        <style>
-          body{font-family:Arial;padding:18px;max-width:520px;margin:0 auto;background:#000;color:#fff}
-          .card{border:1px solid #333;border-radius:14px;padding:16px;background:#111}
-          .title{font-weight:800;font-size:18px;color:#f4c400}
-          .row{margin-top:10px}
-          .label{color:#999;font-size:12px}
-          .value{font-size:16px;font-weight:700;color:#fff}
-          .badge{display:inline-block;padding:6px 10px;border-radius:999px;background:#222;margin-top:8px;color:#f4c400;font-weight:700}
-          .btn{display:block;text-align:center;padding:12px 14px;border-radius:10px;background:#f4c400;color:#000;text-decoration:none;margin-top:12px;font-weight:700}
-          .btn.secondary{background:#333;color:#fff}
-          img.qr{width:160px;height:160px;margin-top:14px}
-          .small{color:#666;font-size:12px;margin-top:10px}
-        </style>
-      </head>
-      <body>
-        <div class="card">
-          <div class="title">ODIVELAS SPORTS CLUB</div>
-
-          <div class="row">
-            <div class="label">Nome</div>
-            <div class="value">${escapeHtml(record.full_name)}</div>
-          </div>
-
-          <div class="row">
-            <div class="label">Nº Sócio</div>
-            <div class="value">${escapeHtml(record.member_number)}</div>
-          </div>
-
-          <div class="row">
-            <div class="label">Válido até</div>
-            <div class="value">${record.valid_until ? escapeHtml(record.valid_until) : "—"}</div>
-          </div>
-
-          <div class="badge">Estado: ${escapeHtml(String(record.status).toUpperCase())}</div>
-
-          ${record.google_wallet_url ? `
-            <a href="${escapeHtml(record.google_wallet_url)}" style="display:inline-flex;align-items:center;justify-content:center;gap:8px;margin-top:16px;padding:12px 24px;background:#1a73e8;color:#fff;text-decoration:none;border-radius:4px;font-weight:500;font-size:14px;box-shadow:0 1px 3px rgba(0,0,0,0.3)">
-              <svg width="18" height="18" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M24 4C12.95 4 4 12.95 4 24s8.95 20 20 20 20-8.95 20-20S35.05 4 24 4zm-4 30V14l12 10-12 10z" fill="white"/>
-              </svg>
-              Add to Google Wallet
-            </a>
-          ` : ''}
-          
-          ${record.apple_pkpass_url ? `
-            <a href="${escapeHtml(record.apple_pkpass_url)}" style="display:inline-block;margin-top:12px">
-              <img src="https://developer.apple.com/wallet/add-to-apple-wallet-guidelines/images/AddtoAppleWalletBadge.svg" alt="Add to Apple Wallet" style="width:200px;height:auto" />
-            </a>
-          ` : ''}
-
-          <a class="btn secondary" href="${escapeHtml(record.qr_validation_url)}">Testar Validação</a>
-
-          <div class="row">
-            <div class="label">QR Code (validação)</div><br/>
-            <img class="qr" src="${qrDataUrl}" alt="QR code" />
-          </div>
-
-          <div class="small">
-            Se estiver no iPhone e o Apple Wallet não abrir a partir do Gmail, abra este link no Safari.
-          </div>
-        </div>
-      </body>
-    </html>
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cartão de Sócio - Odivelas Sports Club</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+      background: #000;
+      color: #fff;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 40px 20px;
+    }
+    
+    .logo {
+      width: 120px;
+      height: auto;
+      margin-bottom: 40px;
+    }
+    
+    .member-name {
+      font-size: 32px;
+      font-weight: 700;
+      text-align: center;
+      margin-bottom: 12px;
+      letter-spacing: 0.5px;
+    }
+    
+    .member-subtitle {
+      color: #999;
+      font-size: 16px;
+      text-align: center;
+      margin-bottom: 40px;
+    }
+    
+    .wallet-buttons {
+      display: flex;
+      gap: 16px;
+      justify-content: center;
+      margin-bottom: 50px;
+      flex-wrap: wrap;
+    }
+    
+    .wallet-buttons a {
+      display: block;
+    }
+    
+    .wallet-buttons img {
+      height: 50px;
+      width: auto;
+      transition: transform 0.2s;
+    }
+    
+    .wallet-buttons img:hover {
+      transform: scale(1.05);
+    }
+    
+    .member-details {
+      background: #1a1a1a;
+      border-radius: 16px;
+      padding: 24px;
+      max-width: 400px;
+      width: 100%;
+      margin-bottom: 30px;
+    }
+    
+    .detail-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 12px 0;
+      border-bottom: 1px solid #333;
+    }
+    
+    .detail-row:last-child {
+      border-bottom: none;
+    }
+    
+    .detail-label {
+      color: #999;
+      font-size: 14px;
+    }
+    
+    .detail-value {
+      font-weight: 600;
+      font-size: 14px;
+    }
+    
+    .qr-section {
+      text-align: center;
+    }
+    
+    .qr-section img {
+      width: 200px;
+      height: 200px;
+      border-radius: 12px;
+    }
+    
+    .footer-note {
+      color: #666;
+      font-size: 13px;
+      text-align: center;
+      margin-top: 30px;
+      max-width: 400px;
+    }
+  </style>
+</head>
+<body>
+  ${logoUrl ? `<img class="logo" src="${escapeHtml(logoUrl)}" alt="Odivelas Sports Club" />` : ''}
+  
+  <h1 class="member-name">${escapeHtml(record.full_name)}</h1>
+  <p class="member-subtitle">Cartão de Sócio</p>
+  
+  <div class="wallet-buttons">
+    ${record.google_wallet_url ? `
+      <a href="${escapeHtml(record.google_wallet_url)}">
+        <img src="https://developers.google.com/static/wallet/images/add_to_google_wallet_button.svg" alt="Add to Google Wallet" />
+      </a>
+    ` : ''}
+    
+    ${record.apple_pkpass_url ? `
+      <a href="${escapeHtml(record.apple_pkpass_url)}">
+        <img src="https://developer.apple.com/assets/elements/badges/download-on-the-app-store.svg" alt="Add to Apple Wallet" style="height: 50px;" />
+      </a>
+    ` : ''}
+  </div>
+  
+  <div class="member-details">
+    <div class="detail-row">
+      <span class="detail-label">Nº Sócio</span>
+      <span class="detail-value">${escapeHtml(record.member_number)}</span>
+    </div>
+    <div class="detail-row">
+      <span class="detail-label">Tipo</span>
+      <span class="detail-value">${escapeHtml(record.member_type || "Sócio")}</span>
+    </div>
+    <div class="detail-row">
+      <span class="detail-label">Válido até</span>
+      <span class="detail-value">${record.valid_until ? escapeHtml(record.valid_until) : "—"}</span>
+    </div>
+    <div class="detail-row">
+      <span class="detail-label">Estado</span>
+      <span class="detail-value">${escapeHtml(String(record.status).toUpperCase())}</span>
+    </div>
+  </div>
+  
+  <div class="qr-section">
+    <img src="${qrDataUrl}" alt="QR Code de Validação" />
+  </div>
+  
+  <p class="footer-note">
+    Adicione este cartão à sua carteira digital para acesso rápido e validação em eventos do clube.
+  </p>
+</body>
+</html>
   `);
 });
 
