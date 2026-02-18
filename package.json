@@ -14,7 +14,7 @@
     "qrcode": "^1.5.3",
     "undici": "^6.19.8",
     "uuid": "^9.0.1",
-    "passkit-generator": "^3.1.0",
-    "archiver": "^5.3.1"
+    "archiver": "^5.3.1",
+    "pg": "^8.11.3"
   }
 }
