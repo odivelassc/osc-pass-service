@@ -2,9 +2,11 @@ const express = require("express");
 const { v4: uuidv4 } = require("uuid");
 const QRCode = require("qrcode");
 const fs = require("fs");
+const path = require("path");
 const jwt = require("jsonwebtoken");
 const { GoogleAuth } = require("google-auth-library");
 const { fetch } = require("undici");
+const { PKPass } = require("passkit-generator");
 
 const app = express();
 app.use(express.json());
@@ -189,6 +191,150 @@ function makeSaveToGoogleWalletUrl({ objectId, classId, origin }) {
   return `https://pay.google.com/gp/v/save/${token}`;
 }
 
+async function generateApplePass(record) {
+  const certPath = process.env.APPLE_PASS_CERT_PATH;
+  const certPassword = process.env.APPLE_PASS_CERT_PASSWORD;
+  const wwdrPath = process.env.APPLE_WWDR_CERT_PATH;
+  const passTypeId = process.env.APPLE_PASS_TYPE_ID;
+  const teamId = process.env.APPLE_TEAM_ID;
+
+  if (!certPath || !certPassword || !wwdrPath || !passTypeId || !teamId) {
+    throw new Error("Missing Apple Wallet configuration in environment variables");
+  }
+
+  const pass = new PKPass(
+    {
+      "passTypeIdentifier": passTypeId,
+      "teamIdentifier": teamId,
+      "organizationName": "Odivelas Sports Club",
+      "description": "Cartão de Sócio",
+      "serialNumber": record.token,
+      "backgroundColor": "rgb(0, 0, 0)",           // Black background
+      "foregroundColor": "rgb(255, 255, 255)",     // White text
+      "labelColor": "rgb(255, 255, 255)"           // White labels (no yellow)
+    },
+    {
+      signerCert: fs.readFileSync(certPath),
+      signerKey: {
+        keyFile: fs.readFileSync(certPath),
+        passphrase: certPassword
+      },
+      wwdr: fs.readFileSync(wwdrPath)
+    }
+  );
+
+  // Set pass structure for membership/store card
+  pass.type = "storeCard";
+  
+  // Logo text (top-left, appears next to logo image)
+  pass.logoText = "ODIVELAS SPORTS CLUB";
+
+  // Header fields (top right)
+  pass.headerFields.push({
+    key: "member-status",
+    label: "ESTADO",
+    value: record.status === "active" ? "ATIVO" : "INATIVO"
+  });
+
+  // Primary fields (large, center - member name)
+  pass.primaryFields.push({
+    key: "member-name",
+    label: "MEMBRO",
+    value: record.full_name
+  });
+
+  // Secondary fields (row below primary - matching Google Wallet 3-column layout)
+  pass.secondaryFields.push(
+    {
+      key: "member-number",
+      label: "Nº",
+      value: String(record.member_number),
+      textAlignment: "PKTextAlignmentLeft"
+    },
+    {
+      key: "member-type",
+      label: "Tipo",
+      value: record.member_type || "Sócio",
+      textAlignment: "PKTextAlignmentCenter"
+    },
+    {
+      key: "valid-until",
+      label: "Válido até",
+      value: record.valid_until || "—",
+      textAlignment: "PKTextAlignmentRight"
+    }
+  );
+
+  // Auxiliary fields removed - no redundant "Clube: Odivelas Sports Club"
+  // Footer image will show branding instead
+
+  // Back fields (shown when flipped)
+  pass.backFields.push(
+    {
+      key: "full-name",
+      label: "NOME COMPLETO",
+      value: record.full_name
+    },
+    {
+      key: "member-id",
+      label: "ID DE MEMBRO",
+      value: record.member_id
+    },
+    {
+      key: "card-url",
+      label: "CARTÃO DIGITAL",
+      value: record.card_public_url
+    },
+    {
+      key: "validation-url",
+      label: "URL DE VALIDAÇÃO",
+      value: record.qr_validation_url
+    }
+  );
+
+  // Add barcode (QR code for validation)
+  pass.barcodes = [{
+    format: "PKBarcodeFormatQR",
+    message: record.qr_validation_url,
+    messageEncoding: "iso-8859-1",
+    altText: `Nº ${record.member_number}`
+  }];
+
+  // Add logos if available
+  const logoPath = process.env.APPLE_PASS_LOGO_PATH;
+  const iconPath = process.env.APPLE_PASS_ICON_PATH || logoPath;
+  const stripPath = process.env.APPLE_PASS_STRIP_PATH;
+  const footerPath = process.env.APPLE_PASS_FOOTER_PATH; // Footer image below QR code
+
+  if (logoPath && fs.existsSync(logoPath)) {
+    pass.addBuffer("logo.png", fs.readFileSync(logoPath));
+    pass.addBuffer("logo@2x.png", fs.readFileSync(logoPath));
+    pass.addBuffer("logo@3x.png", fs.readFileSync(logoPath));
+  }
+
+  if (iconPath && fs.existsSync(iconPath)) {
+    pass.addBuffer("icon.png", fs.readFileSync(iconPath));
+    pass.addBuffer("icon@2x.png", fs.readFileSync(iconPath));
+    pass.addBuffer("icon@3x.png", fs.readFileSync(iconPath));
+  }
+
+  // Strip image (wide banner at top, optional)
+  if (stripPath && fs.existsSync(stripPath)) {
+    pass.addBuffer("strip.png", fs.readFileSync(stripPath));
+    pass.addBuffer("strip@2x.png", fs.readFileSync(stripPath));
+    pass.addBuffer("strip@3x.png", fs.readFileSync(stripPath));
+  }
+
+  // Footer image (banner below QR code - your "ODIVELAS SPORTS CLUB" footer)
+  if (footerPath && fs.existsSync(footerPath)) {
+    pass.addBuffer("footer.png", fs.readFileSync(footerPath));
+    pass.addBuffer("footer@2x.png", fs.readFileSync(footerPath));
+    pass.addBuffer("footer@3x.png", fs.readFileSync(footerPath));
+  }
+
+  return pass.getAsBuffer();
+}
+
 app.post("/api/passes/issue", async (req, res) => {
   const { member_id, full_name, member_number, member_type, valid_until, status } = req.body || {};
 
@@ -248,6 +394,11 @@ app.post("/api/passes/issue", async (req, res) => {
   } catch (e) {
     googleWalletError = e.message || String(e);
     console.error("Google Wallet error:", e);
+  }
+
+  // Generate Apple Wallet pass URL
+  if (process.env.APPLE_PASS_TYPE_ID && process.env.APPLE_TEAM_ID) {
+    payload.apple_pkpass_url = `${baseUrl}/apple/${payload.token}.pkpass`;
   }
 
   // Include the error reason in the response so you can see it without checking logs
@@ -433,8 +584,11 @@ app.get("/c/:token", async (req, res) => {
           <div class="badge">Estado: ${escapeHtml(String(record.status).toUpperCase())}</div>
 
           ${record.google_wallet_url ? `
-            <a href="${escapeHtml(record.google_wallet_url)}" style="display:inline-block;margin-top:16px">
-              <img src="https://developers.google.com/static/wallet/images/add_to_google_wallet_button.svg" alt="Add to Google Wallet" style="width:200px;height:auto" />
+            <a href="${escapeHtml(record.google_wallet_url)}" style="display:inline-flex;align-items:center;justify-content:center;gap:8px;margin-top:16px;padding:12px 24px;background:#1a73e8;color:#fff;text-decoration:none;border-radius:4px;font-weight:500;font-size:14px;box-shadow:0 1px 3px rgba(0,0,0,0.3)">
+              <svg width="18" height="18" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M24 4C12.95 4 4 12.95 4 24s8.95 20 20 20 20-8.95 20-20S35.05 4 24 4zm-4 30V14l12 10-12 10z" fill="white"/>
+              </svg>
+              Add to Google Wallet
             </a>
           ` : ''}
           
@@ -458,6 +612,22 @@ app.get("/c/:token", async (req, res) => {
       </body>
     </html>
   `);
+});
+
+app.get("/apple/:token.pkpass", async (req, res) => {
+  try {
+    const record = store.get(req.params.token);
+    if (!record) return res.status(404).send("Pass not found");
+
+    const pkpassBuffer = await generateApplePass(record);
+    
+    res.setHeader("Content-Type", "application/vnd.apple.pkpass");
+    res.setHeader("Content-Disposition", `attachment; filename="OSC_Member_${record.member_number}.pkpass"`);
+    res.send(pkpassBuffer);
+  } catch (error) {
+    console.error("Apple Pass generation error:", error);
+    res.status(500).json({ error: error.message });
+  }
 });
 
 app.get("/admin/ping", (req, res) => {
