@@ -21,6 +21,7 @@ function escapeHtml(str) {
   }[m]));
 }
 
+// ============ TOTP Security Functions ============
 
 function base32Encode(buffer) {
   const base32Chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
@@ -133,6 +134,9 @@ function verifyTOTP(secret, token, window = 1) {
   return false;
 }
 
+// ============ End TOTP Functions ============
+
+
 function computeValidationState(record) {
   if (!record) return { state: "INVALID", label: "Inválido" };
 
@@ -162,6 +166,9 @@ async function getGoogleAccessToken() {
   return t.token;
 }
 
+// ✅ FIX 1: Function signature restored
+// ✅ FIX 2: logo field added to the object body
+// ✅ FIX 3: Image URIs guarded — only included when valid https:// URLs
 async function upsertGenericObject({ issuerId, classSuffix, objectSuffix, record }) {
   const accessToken = await getGoogleAccessToken();
   const classId = `${issuerId}.${classSuffix}`;
@@ -171,7 +178,7 @@ async function upsertGenericObject({ issuerId, classSuffix, objectSuffix, record
 
   const logoUri = process.env.OSC_LOGO_URL;
   const heroUri = process.env.OSC_HERO_URL;
-  const wideLogoUri = process.env.OSC_WIDE_LOGO_URL || logoUri;
+  const wideLogoUri = process.env.OSC_WIDE_LOGO_URL || logoUri; // Use dedicated wide logo or fall back to regular logo
 
   if (!logoUri || !logoUri.startsWith("https://")) {
     console.warn("⚠️  OSC_LOGO_URL is missing or not HTTPS — logo will not render on the card");
@@ -188,7 +195,7 @@ async function upsertGenericObject({ issuerId, classSuffix, objectSuffix, record
     classId,
     state: record.status === "active" ? "ACTIVE" : "INACTIVE",
     genericType: "GENERIC_TYPE_UNSPECIFIED",
-  
+    // ✅ ALL visual fields belong on GenericObject for Generic passes
     cardTitle: { 
       defaultValue: { language: "pt-PT", value: "ODIVELAS SPORTS CLUB" } 
     },
@@ -204,7 +211,7 @@ async function upsertGenericObject({ issuerId, classSuffix, objectSuffix, record
       value: record.qr_validation_url,
       renderOptions: { appearance: "NON_CONFORMANT" }
     },
- 
+    // textModulesData with id fields that match the classTemplateInfo fieldPaths
     textModulesData: [
       { 
         id: "memberNumber", 
@@ -222,7 +229,7 @@ async function upsertGenericObject({ issuerId, classSuffix, objectSuffix, record
         body: String(record.valid_until || "—") 
       }
     ],
-  
+    // Logo and hero image - only include if valid HTTPS URLs
     ...(logoUri?.startsWith("https://") && {
       logo: {
         sourceUri: { uri: logoUri },
@@ -315,6 +322,7 @@ async function generateApplePass(record) {
     throw new Error("Missing Apple Wallet configuration");
   }
 
+  // Create pass.json manually
   const passJson = {
     formatVersion: 1,
     passTypeIdentifier: passTypeId,
@@ -390,10 +398,12 @@ async function generateApplePass(record) {
 
   const passJsonStr = JSON.stringify(passJson, null, 2);
   
+  // Create manifest with SHA1 hashes
   const manifest = {
     "pass.json": crypto.createHash('sha1').update(passJsonStr).digest('hex')
   };
 
+  // Add logo if available
   const logoPath = process.env.APPLE_PASS_LOGO_PATH;
   if (logoPath && fs.existsSync(logoPath)) {
     const logoData = fs.readFileSync(logoPath);
@@ -423,6 +433,7 @@ async function generateApplePass(record) {
     archive.on('end', () => resolve(Buffer.concat(chunks)));
     archive.on('error', reject);
 
+    // Add files to archive
     archive.append(passJsonStr, { name: 'pass.json' });
     archive.append(manifestStr, { name: 'manifest.json' });
     archive.append(signature, { name: 'signature' });
