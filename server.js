@@ -7,9 +7,25 @@ const crypto = require("crypto");
 const jwt = require("jsonwebtoken");
 const { GoogleAuth } = require("google-auth-library");
 const { fetch } = require("undici");
+const { Pool } = require("pg");
 
 const app = express();
 app.use(express.json());
+
+// PostgreSQL connection pool
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+});
+
+// Test database connection
+pool.query('SELECT NOW()', (err, res) => {
+  if (err) {
+    console.error('❌ Database connection failed:', err);
+  } else {
+    console.log('✅ Database connected at:', res.rows[0].now);
+  }
+});
 
 function escapeHtml(str) {
   return String(str ?? "").replace(/[&<>"']/g, (m) => ({
@@ -136,26 +152,64 @@ function verifyTOTP(secret, token, window = 1) {
 
 // ============ End TOTP Functions ============
 
-
 function computeValidationState(record) {
   if (!record) return { state: "INVALID", label: "Inválido" };
-
-  if (record.status !== "active") {
-    return { state: "INACTIVE", label: "Inativo" };
-  }
-
+  if (record.status !== "active") return { state: "INACTIVE", label: "Inativo" };
   if (record.valid_until) {
-    const now = new Date();
     const validUntil = new Date(record.valid_until);
-    if (validUntil < now) {
-      return { state: "EXPIRED", label: "Expirado" };
-    }
+    if (validUntil < new Date()) return { state: "EXPIRED", label: "Expirado" };
   }
-
   return { state: "VALID", label: "Válido" };
 }
 
-const store = new Map();
+// Database helper functions
+async function savePass(passData) {
+  const query = `
+    INSERT INTO passes (
+      token, member_id, full_name, member_number, member_type,
+      valid_until, status, totp_secret, card_public_url,
+      qr_validation_url, apple_pkpass_url, google_wallet_url
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+    ON CONFLICT (token) DO UPDATE SET
+      full_name = EXCLUDED.full_name,
+      member_number = EXCLUDED.member_number,
+      member_type = EXCLUDED.member_type,
+      valid_until = EXCLUDED.valid_until,
+      status = EXCLUDED.status,
+      apple_pkpass_url = EXCLUDED.apple_pkpass_url,
+      google_wallet_url = EXCLUDED.google_wallet_url,
+      updated_at = CURRENT_TIMESTAMP
+    RETURNING *
+  `;
+  
+  const values = [
+    passData.token,
+    passData.member_id,
+    passData.full_name,
+    passData.member_number,
+    passData.member_type,
+    passData.valid_until,
+    passData.status,
+    passData.totp_secret,
+    passData.card_public_url,
+    passData.qr_validation_url,
+    passData.apple_pkpass_url,
+    passData.google_wallet_url
+  ];
+  
+  const result = await pool.query(query, values);
+  return result.rows[0];
+}
+
+async function getPass(token) {
+  const result = await pool.query('SELECT * FROM passes WHERE token = $1', [token]);
+  return result.rows[0] || null;
+}
+
+async function findPassByMemberId(memberId) {
+  const result = await pool.query('SELECT * FROM passes WHERE member_id = $1', [memberId]);
+  return result.rows[0] || null;
+}
 
 async function getGoogleAccessToken() {
   const auth = new GoogleAuth({
@@ -166,36 +220,63 @@ async function getGoogleAccessToken() {
   return t.token;
 }
 
-// ✅ FIX 1: Function signature restored
-// ✅ FIX 2: logo field added to the object body
-// ✅ FIX 3: Image URIs guarded — only included when valid https:// URLs
 async function upsertGenericObject({ issuerId, classSuffix, objectSuffix, record }) {
   const accessToken = await getGoogleAccessToken();
+
   const classId = `${issuerId}.${classSuffix}`;
   const objectId = `${issuerId}.${objectSuffix}`;
 
-  const url = `https://walletobjects.googleapis.com/walletobjects/v1/genericObject/${encodeURIComponent(objectId)}`;
+  const classUrl = `https://walletobjects.googleapis.com/walletobjects/v1/genericClass/${classId}`;
+  const classRes = await fetch(classUrl, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
 
-  const logoUri = process.env.OSC_LOGO_URL;
-  const heroUri = process.env.OSC_HERO_URL;
-  const wideLogoUri = process.env.OSC_WIDE_LOGO_URL || logoUri; // Use dedicated wide logo or fall back to regular logo
-
-  if (!logoUri || !logoUri.startsWith("https://")) {
-    console.warn("⚠️  OSC_LOGO_URL is missing or not HTTPS — logo will not render on the card");
-  }
-  if (!wideLogoUri || !wideLogoUri.startsWith("https://")) {
-    console.warn("⚠️  OSC_WIDE_LOGO_URL is missing or not HTTPS — wide logo will not render");
-  }
-  if (!heroUri || !heroUri.startsWith("https://")) {
-    console.warn("⚠️  OSC_HERO_URL is missing or not HTTPS — hero image will not render on the card");
+  if (!classRes.ok && classRes.status !== 404) {
+    throw new Error(`Failed to check class existence: ${await classRes.text()}`);
   }
 
-  const body = {
+  if (classRes.status === 404) {
+    const createClassRes = await fetch(
+      "https://walletobjects.googleapis.com/walletobjects/v1/genericClass",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          id: classId,
+          classTemplateInfo: {
+            cardTemplateOverride: {
+              cardRowTemplateInfos: [
+                { oneItem: { item: { firstValue: { fields: [{ fieldPath: "class.genericType" }] } } } },
+                { twoItems: { startItem: { firstValue: { fields: [{ fieldPath: "object.subheader" }] } }, endItem: { firstValue: { fields: [{ fieldPath: "object.header" }] } } } }
+              ]
+            }
+          }
+        }),
+      }
+    );
+
+    if (!createClassRes.ok) {
+      throw new Error(`Failed to create class: ${await createClassRes.text()}`);
+    }
+  }
+
+  const objectUrl = `https://walletobjects.googleapis.com/walletobjects/v1/genericObject/${objectId}`;
+  const checkRes = await fetch(objectUrl, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+
+  const existingData = checkRes.ok ? await checkRes.json() : null;
+
+  const objectPayload = {
     id: objectId,
     classId,
     state: record.status === "active" ? "ACTIVE" : "INACTIVE",
     genericType: "GENERIC_TYPE_UNSPECIFIED",
-    // ✅ ALL visual fields belong on GenericObject for Generic passes
     cardTitle: { 
       defaultValue: { language: "pt-PT", value: "ODIVELAS SPORTS CLUB" } 
     },
@@ -209,101 +290,94 @@ async function upsertGenericObject({ issuerId, classSuffix, objectSuffix, record
     barcode: {
       type: "QR_CODE",
       value: record.qr_validation_url,
-      renderOptions: { appearance: "NON_CONFORMANT" }
+      alternateText: `Nº ${record.member_number}`,
     },
-    // textModulesData with id fields that match the classTemplateInfo fieldPaths
+    logo: {
+      sourceUri: {
+        uri: process.env.OSC_LOGO_URL || "https://github.com/odivelassc/osc-pass-service/blob/main/logo_large.png?raw=true",
+      },
+      contentDescription: {
+        defaultValue: { language: "pt-PT", value: "Odivelas Sports Club" },
+      },
+    },
+    wideLogoImage: {
+      sourceUri: {
+        uri: process.env.OSC_WIDE_LOGO_URL || "https://github.com/odivelassc/osc-pass-service/blob/main/wide_logo_banner.png?raw=true",
+      },
+      contentDescription: {
+        defaultValue: { language: "pt-PT", value: "Odivelas Sports Club Banner" },
+      },
+    },
+    heroImage: {
+      sourceUri: {
+        uri: process.env.OSC_HERO_URL || "https://github.com/odivelassc/osc-pass-service/blob/main/osc%20logo.png?raw=true",
+      },
+      contentDescription: {
+        defaultValue: { language: "pt-PT", value: "OSC Hero" },
+      },
+    },
     textModulesData: [
-      { 
-        id: "memberNumber", 
-        header: "Nº", 
-        body: String(record.member_number || "") 
+      {
+        header: "Nº",
+        body: String(record.member_number),
+        id: "member_number",
       },
-      { 
-        id: "type", 
-        header: "Tipo", 
-        body: record.member_type || "Sócio" 
+      {
+        header: "Tipo",
+        body: record.member_type || "Sócio",
+        id: "member_type",
       },
-      { 
-        id: "validUntil", 
-        header: "Válido até", 
-        body: String(record.valid_until || "—") 
-      }
+      {
+        header: "Válido até",
+        body: record.valid_until || "—",
+        id: "valid_until",
+      },
     ],
-    // Logo and hero image - only include if valid HTTPS URLs
-    ...(logoUri?.startsWith("https://") && {
-      logo: {
-        sourceUri: { uri: logoUri },
-        contentDescription: { 
-          defaultValue: { language: "pt-PT", value: "OSC Logo" } 
-        }
-      }
-    }),
-    ...(wideLogoUri?.startsWith("https://") && {
-      wideLogo: {
-        sourceUri: { uri: wideLogoUri },
-        contentDescription: { 
-          defaultValue: { language: "pt-PT", value: "OSC Logo Wide" } 
-        }
-      }
-    }),
-    ...(heroUri?.startsWith("https://") && {
-      heroImage: {
-        sourceUri: { uri: heroUri },
-        contentDescription: { 
-          defaultValue: { language: "pt-PT", value: "OSC Banner" } 
-        }
-      }
-    })
   };
 
-  let r = await fetch(url, {
-    method: "PATCH",
+  if (existingData && existingData.version) {
+    objectPayload.version = String(parseInt(existingData.version || "0", 10) + 1);
+  }
+
+  const method = existingData ? "PUT" : "POST";
+  const url = existingData
+    ? objectUrl
+    : "https://walletobjects.googleapis.com/walletobjects/v1/genericObject";
+
+  const res = await fetch(url, {
+    method,
     headers: {
       Authorization: `Bearer ${accessToken}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify(body),
+    body: JSON.stringify(objectPayload),
   });
 
-  if (r.status === 404) {
-    r = await fetch("https://walletobjects.googleapis.com/walletobjects/v1/genericObject", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-    });
+  if (!res.ok) {
+    throw new Error(`Failed to upsert object: ${await res.text()}`);
   }
 
-  if (!r.ok && r.status !== 409) {
-    const txt = await r.text();
-    throw new Error(`GenericObject upsert failed: ${r.status} ${txt}`);
-  }
-
-  // ✅ FIX: always return classId + objectId so the JWT URL is always generated,
-  // even when the object already existed (409) or was just patched
   return { classId, objectId };
-  // Note: 409 = already exists, which is fine — we still need the IDs for the JWT
 }
 
 function makeSaveToGoogleWalletUrl({ objectId, classId, origin }) {
-  const saPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
-  // ✅ FIX: clear error if credentials path is missing or file doesn't exist
-  if (!saPath) throw new Error("GOOGLE_APPLICATION_CREDENTIALS env var is not set");
-  if (!fs.existsSync(saPath)) throw new Error(`Service account file not found at: ${saPath}`);
-  const sa = JSON.parse(fs.readFileSync(saPath, "utf8"));
-
   const claims = {
+    iss: process.env.GOOGLE_APPLICATION_CREDENTIALS ? 
+      JSON.parse(fs.readFileSync(process.env.GOOGLE_APPLICATION_CREDENTIALS, "utf8")).client_email : 
+      "service-account@project.iam.gserviceaccount.com",
     aud: "google",
-    iss: sa.client_email,
-    typ: "savetowallet",
-    iat: Math.floor(Date.now() / 1000),
     origins: [origin],
-    payload: { genericObjects: [{ id: objectId, classId }] }
+    typ: "savetowallet",
+    payload: {
+      genericObjects: [{ id: objectId, classId }],
+    },
   };
 
-  const token = jwt.sign(claims, sa.private_key, { algorithm: "RS256" });
+  const privateKey = process.env.GOOGLE_APPLICATION_CREDENTIALS ?
+    JSON.parse(fs.readFileSync(process.env.GOOGLE_APPLICATION_CREDENTIALS, "utf8")).private_key :
+    "";
+
+  const token = jwt.sign(claims, privateKey, { algorithm: "RS256" });
   return `https://pay.google.com/gp/v/save/${token}`;
 }
 
@@ -311,9 +385,9 @@ async function generateApplePass(record) {
   const { execSync } = require('child_process');
   const archiver = require('archiver');
   
-  const certPath = process.env.APPLE_PASS_CERT_PATH; // signerCert.pem
-  const keyPath = process.env.APPLE_PASS_KEY_PATH;   // signerKey.pem
-  const wwdrPath = process.env.APPLE_WWDR_CERT_PATH; // wwdr.pem
+  const certPath = process.env.APPLE_PASS_CERT_PATH;
+  const keyPath = process.env.APPLE_PASS_KEY_PATH;
+  const wwdrPath = process.env.APPLE_WWDR_CERT_PATH;
   const passTypeId = process.env.APPLE_PASS_TYPE_ID;
   const teamId = process.env.APPLE_TEAM_ID;
 
@@ -321,14 +395,11 @@ async function generateApplePass(record) {
     throw new Error("Missing Apple Wallet configuration");
   }
 
-  // Create unique temp directory for this pass
   const tempDir = `/tmp/pass-${record.token}-${Date.now()}`;
   
   try {
-    // Create temp directory
     execSync(`mkdir -p ${tempDir}`);
 
-    // Create pass.json matching C# structure exactly
     const passJson = {
       formatVersion: 1,
       passTypeIdentifier: passTypeId,
@@ -338,7 +409,7 @@ async function generateApplePass(record) {
       description: "Odivelas Sports Club - Membership Card",
       logoText: "Odivelas Sports Club",
       backgroundColor: "#000000",
-      labelColor: "#fae442",  // Yellow like C#
+      labelColor: "#fae442",
       foregroundColor: "#ffffff",
       storeCard: {
         headerFields: [{
@@ -374,35 +445,32 @@ async function generateApplePass(record) {
     const passJsonStr = JSON.stringify(passJson);
     fs.writeFileSync(`${tempDir}/pass.json`, passJsonStr);
 
-    // Create manifest with SHA1 hashes
     const manifest = {
       "pass.json": crypto.createHash('sha1').update(passJsonStr).digest('hex')
     };
 
-    // Add logo/icon if available
-    const logoPath = process.env.APPLE_PASS_LOGO_PATH;
-    if (logoPath && fs.existsSync(logoPath)) {
-      const logoData = fs.readFileSync(logoPath);
+    const logoPath = process.env.APPLE_PASS_LOGO_PATH || process.env.APPLE_PASS_ICON_PATH;
+    const stripPath = process.env.APPLE_PASS_STRIP_PATH;
+    
+    const oscLogoPath = logoPath || stripPath;
+    
+    if (oscLogoPath && fs.existsSync(oscLogoPath)) {
+      const logoData = fs.readFileSync(oscLogoPath);
+      
       fs.writeFileSync(`${tempDir}/icon.png`, logoData);
       fs.writeFileSync(`${tempDir}/icon@2x.png`, logoData);
       manifest["icon.png"] = crypto.createHash('sha1').update(logoData).digest('hex');
       manifest["icon@2x.png"] = manifest["icon.png"];
-    }
-
-    // Add strip if available
-    const stripPath = process.env.APPLE_PASS_STRIP_PATH;
-    if (stripPath && fs.existsSync(stripPath)) {
-      const stripData = fs.readFileSync(stripPath);
-      fs.writeFileSync(`${tempDir}/strip.png`, stripData);
-      fs.writeFileSync(`${tempDir}/strip@2x.png`, stripData);
-      manifest["strip.png"] = crypto.createHash('sha1').update(stripData).digest('hex');
+      
+      fs.writeFileSync(`${tempDir}/strip.png`, logoData);
+      fs.writeFileSync(`${tempDir}/strip@2x.png`, logoData);
+      manifest["strip.png"] = crypto.createHash('sha1').update(logoData).digest('hex');
       manifest["strip@2x.png"] = manifest["strip.png"];
     }
 
     const manifestStr = JSON.stringify(manifest);
     fs.writeFileSync(`${tempDir}/manifest.json`, manifestStr);
 
-    // Sign manifest using OpenSSL SMIME (PKCS7) - this is what Apple requires
     execSync(`openssl smime -binary -sign \\
       -certfile "${wwdrPath}" \\
       -signer "${certPath}" \\
@@ -411,14 +479,12 @@ async function generateApplePass(record) {
       -out "${tempDir}/signature" \\
       -outform DER`);
 
-    // Create .pkpass zip file
     return new Promise((resolve, reject) => {
       const archive = archiver('zip', { zlib: { level: 9 } });
       const chunks = [];
       
       archive.on('data', chunk => chunks.push(chunk));
       archive.on('end', () => {
-        // Cleanup
         execSync(`rm -rf ${tempDir}`);
         resolve(Buffer.concat(chunks));
       });
@@ -427,7 +493,6 @@ async function generateApplePass(record) {
         reject(err);
       });
 
-      // Add all files from temp directory
       archive.file(`${tempDir}/pass.json`, { name: 'pass.json' });
       archive.file(`${tempDir}/manifest.json`, { name: 'manifest.json' });
       archive.file(`${tempDir}/signature`, { name: 'signature' });
@@ -445,7 +510,6 @@ async function generateApplePass(record) {
       archive.finalize();
     });
   } catch (error) {
-    // Cleanup on error
     try {
       execSync(`rm -rf ${tempDir}`);
     } catch (e) {
@@ -464,80 +528,74 @@ app.post("/api/passes/issue", async (req, res) => {
     });
   }
 
-  // Check if member already exists - if so, update their data but keep TOTP secret
-  let existingToken = null;
-  let existingTotpSecret = null;
-  for (const [token, rec] of store.entries()) {
-    if (rec.member_id === member_id) {
-      existingToken = token;
-      existingTotpSecret = rec.totp_secret; // Preserve existing TOTP secret
-      break;
-    }
-  }
-
-  const token = existingToken || uuidv4().replaceAll("-", "");
-  const totpSecret = existingTotpSecret || generateTOTPSecret(); // Generate new secret only for new members
-  const baseUrl = process.env.PUBLIC_BASE_URL || `http://localhost:${process.env.PORT || 3000}`;
-
-  const payload = {
-    token,
-    member_id,
-    full_name,
-    member_number,
-    member_type: member_type || "Sócio",
-    valid_until: valid_until || null,
-    status: status || "active",
-    totp_secret: totpSecret, // Store TOTP secret
-    card_public_url: `${baseUrl}/c/${token}`,
-    qr_validation_url: `${baseUrl}/v/${token}`, // This will now generate dynamic codes
-    apple_pkpass_url: null,
-    google_wallet_url: null
-  };
-
-  store.set(token, payload);
-
-  // ✅ FIX: surface the real reason google_wallet_url is null
-  let googleWalletError = null;
-
   try {
-    const issuerId = process.env.GOOGLE_ISSUER_ID;
-    const origin = process.env.PUBLIC_BASE_URL || "https://osc-pass-service.onrender.com";
-    const classSuffix = "MembershipCard";
+    const existingPass = await findPassByMemberId(member_id);
+    
+    const token = existingPass ? existingPass.token : uuidv4().replaceAll("-", "");
+    const totpSecret = existingPass ? existingPass.totp_secret : generateTOTPSecret();
+    const baseUrl = process.env.PUBLIC_BASE_URL || `http://localhost:${process.env.PORT || 3000}`;
 
-    if (!issuerId) {
-      googleWalletError = "GOOGLE_ISSUER_ID env var is not set";
-      console.warn("⚠️  " + googleWalletError);
-    } else if (!process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-      googleWalletError = "GOOGLE_APPLICATION_CREDENTIALS env var is not set";
-      console.warn("⚠️  " + googleWalletError);
-    } else {
-      const { classId, objectId } = await upsertGenericObject({
-        issuerId,
-        classSuffix,
-        objectSuffix: payload.token,
-        record: payload,
-      });
+    const payload = {
+      token,
+      member_id,
+      full_name,
+      member_number,
+      member_type: member_type || "Sócio",
+      valid_until: valid_until || null,
+      status: status || "active",
+      totp_secret: totpSecret,
+      card_public_url: `${baseUrl}/c/${token}`,
+      qr_validation_url: `${baseUrl}/v/${token}`,
+      apple_pkpass_url: null,
+      google_wallet_url: null
+    };
 
-      payload.google_wallet_url = makeSaveToGoogleWalletUrl({ objectId, classId, origin });
+    await savePass(payload);
+
+    let googleWalletError = null;
+
+    try {
+      const issuerId = process.env.GOOGLE_ISSUER_ID;
+      const origin = process.env.PUBLIC_BASE_URL || "https://osc-pass-service.onrender.com";
+      const classSuffix = "MembershipCard";
+
+      if (!issuerId) {
+        googleWalletError = "GOOGLE_ISSUER_ID env var is not set";
+        console.warn("⚠️  " + googleWalletError);
+      } else if (!process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+        googleWalletError = "GOOGLE_APPLICATION_CREDENTIALS env var is not set";
+        console.warn("⚠️  " + googleWalletError);
+      } else {
+        const { classId, objectId } = await upsertGenericObject({
+          issuerId,
+          classSuffix,
+          objectSuffix: payload.token,
+          record: payload,
+        });
+
+        payload.google_wallet_url = makeSaveToGoogleWalletUrl({ objectId, classId, origin });
+      }
+    } catch (e) {
+      googleWalletError = e.message || String(e);
+      console.error("Google Wallet error:", e);
     }
-  } catch (e) {
-    googleWalletError = e.message || String(e);
-    console.error("Google Wallet error:", e);
-  }
 
-  // Generate Apple Wallet pass URL
-  if (process.env.APPLE_PASS_TYPE_ID && process.env.APPLE_TEAM_ID) {
-    payload.apple_pkpass_url = `${baseUrl}/apple/${payload.token}.pkpass`;
-  }
+    if (process.env.APPLE_PASS_TYPE_ID && process.env.APPLE_TEAM_ID) {
+      payload.apple_pkpass_url = `${baseUrl}/apple/${payload.token}.pkpass`;
+    }
 
-  // Include the error reason in the response so you can see it without checking logs
-  res.json({
-    ...payload,
-    ...(googleWalletError && { google_wallet_error: googleWalletError })
-  });
+    await savePass(payload);
+
+    res.json({
+      ...payload,
+      ...(googleWalletError && { google_wallet_error: googleWalletError })
+    });
+  } catch (error) {
+    console.error('Error issuing pass:', error);
+    res.status(500).json({ error: error.message });
+  }
 });
 
-// ✅ FIX 4: Enhanced env-check with image URL validation
 app.get("/admin/env-check", (req, res) => {
   const logoUrl  = process.env.OSC_LOGO_URL  || "";
   const heroUrl  = process.env.OSC_HERO_URL  || "";
@@ -553,14 +611,13 @@ app.get("/admin/env-check", (req, res) => {
   });
 });
 
-app.get("/v/:token", (req, res) => {
-  const record = store.get(req.params.token);
-  const totpCode = req.query.code; // Get TOTP code from query parameter
+app.get("/v/:token", async (req, res) => {
+  const record = await getPass(req.params.token);
+  const totpCode = req.query.code;
 
   let state = computeValidationState(record);
   let isValid = state.state === "VALID";
   
-  // If TOTP code is provided, verify it
   if (totpCode && record && record.totp_secret) {
     const totpValid = verifyTOTP(record.totp_secret, totpCode);
     if (!totpValid) {
@@ -568,7 +625,6 @@ app.get("/v/:token", (req, res) => {
       isValid = false;
     }
   } else if (!totpCode && record) {
-    // No TOTP code provided but record exists - show warning
     state = { state: "NO_CODE", label: "Código necessário" };
     isValid = false;
   }
@@ -591,23 +647,24 @@ app.get("/v/:token", (req, res) => {
 
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.send(`
-<!doctype html>
-<html>
+<!DOCTYPE html>
+<html lang="pt">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>${escapeHtml(clubName)} — Validação</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${title} | ${clubName}</title>
   <style>
-    :root{
-      --bg:#000;
-      --text:#fff;
-      --muted:rgba(255,255,255,.70);
-      --yellow:#f4c400;
-      --red:#ff3b30;
-      --ring:rgba(255,255,255,.10);
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #000;
+      --yellow: #F4C400;
+      --red: #FF3B30;
+      --white: #FFFFFF;
+      --muted: rgba(255,255,255,.65);
+      --ring: rgba(255,255,255,.12);
     }
-    body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;}
-    .wrap{min-height:100vh;display:grid;place-items:center;padding:20px;}
+    body{font-family:system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--white);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;}
+    .wrap{max-width:600px;width:100%}
     .panel{width:min(560px, 96vw);text-align:center;padding:24px 18px 28px;}
     .top{display:block;opacity:.95;margin-bottom:10px}
     .club{font-weight:900;letter-spacing:.08em;font-size:12px;color:rgba(255,255,255,.60)}
@@ -659,33 +716,32 @@ app.get("/v/:token", (req, res) => {
 
       <h1 class="title">${title}</h1>
       <div class="sub">${escapeHtml(subtitle)}</div>
+
       <div class="pulse"></div>
-      <div class="hint">Validação oficial — Odivelas Sports Club</div>
+
+      ${record && record.full_name ? `<div class="hint">Sócio: ${escapeHtml(record.full_name)}</div>` : ""}
     </div>
   </div>
 </body>
 </html>
-`);
+  `);
 });
 
-app.get("/v/:token.txt", (req, res) => {
-  const record = store.get(req.params.token);
+app.get("/v/:token.txt", async (req, res) => {
+  const record = await getPass(req.params.token);
   const state = computeValidationState(record);
   res.setHeader("Content-Type", "text/plain; charset=utf-8");
   res.send(state.state);
 });
 
 app.get("/c/:token", async (req, res) => {
-  const record = store.get(req.params.token);
+  const record = await getPass(req.params.token);
   if (!record) return res.status(404).send("Card not found");
 
-  // Generate current TOTP code
   const currentTOTP = record.totp_secret ? generateTOTP(record.totp_secret) : '';
   
-  // Create validation URL with TOTP code
   const validationUrlWithTOTP = `${record.qr_validation_url}?code=${currentTOTP}`;
   
-  // Generate QR code with TOTP
   const qrDataUrl = await QRCode.toDataURL(validationUrlWithTOTP);
   const logoUrl = process.env.OSC_LOGO_URL || "";
 
@@ -696,66 +752,71 @@ app.get("/c/:token", async (req, res) => {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Cartão de Sócio - Odivelas Sports Club</title>
+  <title>Cartão de Sócio - ${escapeHtml(record.full_name)}</title>
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
     body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+      font-family: system-ui, -apple-system, sans-serif;
       background: #000;
       color: #fff;
       min-height: 100vh;
       display: flex;
       flex-direction: column;
       align-items: center;
-      padding: 40px 20px;
+      justify-content: center;
+      padding: 20px;
     }
     
     .logo {
-      width: 120px;
+      max-width: 150px;
       height: auto;
-      margin-bottom: 40px;
+      margin-bottom: 30px;
     }
     
     .member-name {
       font-size: 32px;
       font-weight: 700;
       text-align: center;
-      margin-bottom: 12px;
-      letter-spacing: 0.5px;
+      margin-bottom: 8px;
     }
     
     .member-subtitle {
-      color: #999;
       font-size: 16px;
+      color: #999;
       text-align: center;
-      margin-bottom: 40px;
+      margin-bottom: 30px;
     }
     
     .wallet-buttons {
       display: flex;
       gap: 16px;
       justify-content: center;
-      margin-bottom: 50px;
+      margin-bottom: 40px;
       flex-wrap: wrap;
     }
     
     .wallet-buttons a {
       display: block;
+      transition: opacity 0.2s;
+    }
+    
+    .wallet-buttons a:hover {
+      opacity: 0.8;
     }
     
     .wallet-buttons img {
       height: 50px;
       width: auto;
-      transition: transform 0.2s;
-    }
-    
-    .wallet-buttons img:hover {
-      transform: scale(1.05);
     }
     
     .member-details {
       background: #1a1a1a;
-      border-radius: 16px;
+      border-radius: 12px;
       padding: 24px;
       max-width: 400px;
       width: 100%;
@@ -814,7 +875,6 @@ app.get("/c/:token", async (req, res) => {
         <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/b/bb/Add_to_Google_Wallet_badge.svg/1280px-Add_to_Google_Wallet_badge.svg.png" alt="Add to Google Wallet" />
       </a>
     ` : ''}
-    
     ${record.apple_pkpass_url ? `
       <a href="${escapeHtml(record.apple_pkpass_url)}">
         <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/3/30/Add_to_Apple_Wallet_badge.svg/1280px-Add_to_Apple_Wallet_badge.svg.png" alt="Add to Apple Wallet" />
@@ -829,15 +889,15 @@ app.get("/c/:token", async (req, res) => {
     </div>
     <div class="detail-row">
       <span class="detail-label">Tipo</span>
-      <span class="detail-value">${escapeHtml(record.member_type || "Sócio")}</span>
+      <span class="detail-value">${escapeHtml(record.member_type || 'Sócio')}</span>
     </div>
     <div class="detail-row">
       <span class="detail-label">Válido até</span>
-      <span class="detail-value">${record.valid_until ? escapeHtml(record.valid_until) : "—"}</span>
+      <span class="detail-value">${escapeHtml(record.valid_until || '—')}</span>
     </div>
     <div class="detail-row">
       <span class="detail-label">Estado</span>
-      <span class="detail-value">${escapeHtml(String(record.status).toUpperCase())}</span>
+      <span class="detail-value">${record.status === 'active' ? 'ATIVO' : 'INATIVO'}</span>
     </div>
   </div>
   
@@ -853,7 +913,6 @@ app.get("/c/:token", async (req, res) => {
   </p>
   
   <script>
-    // Auto-refresh QR code every 30 seconds with new TOTP
     setInterval(async () => {
       try {
         const response = await fetch('/c/${record.token}/qr');
@@ -862,7 +921,7 @@ app.get("/c/:token", async (req, res) => {
       } catch (error) {
         console.error('Failed to refresh QR code:', error);
       }
-    }, 30000); // 30 seconds
+    }, 30000);
   </script>
 </body>
 </html>
@@ -870,16 +929,13 @@ app.get("/c/:token", async (req, res) => {
 });
 
 app.get("/c/:token/qr", async (req, res) => {
-  const record = store.get(req.params.token);
+  const record = await getPass(req.params.token);
   if (!record) return res.status(404).json({ error: "Card not found" });
 
-  // Generate current TOTP code
   const currentTOTP = record.totp_secret ? generateTOTP(record.totp_secret) : '';
   
-  // Create validation URL with TOTP code
   const validationUrlWithTOTP = `${record.qr_validation_url}?code=${currentTOTP}`;
   
-  // Generate QR code
   const qrDataUrl = await QRCode.toDataURL(validationUrlWithTOTP);
   
   res.json({ qrDataUrl, expiresIn: 30 });
@@ -887,13 +943,12 @@ app.get("/c/:token/qr", async (req, res) => {
 
 app.get("/apple/:token.pkpass", async (req, res) => {
   try {
-    const record = store.get(req.params.token);
+    const record = await getPass(req.params.token);
     if (!record) return res.status(404).send("Pass not found");
 
     const pkpassBuffer = await generateApplePass(record);
     
     res.setHeader("Content-Type", "application/vnd.apple.pkpass");
-    // Use 'inline' so iPhone Safari opens directly in Wallet instead of downloading
     res.setHeader("Content-Disposition", `inline; filename="OSC_Member_${record.member_number}.pkpass"`);
     res.send(pkpassBuffer);
   } catch (error) {
@@ -913,6 +968,39 @@ app.get("/admin/ping", (req, res) => {
   });
 });
 
+app.get("/admin/debug-apple-logo", (req, res) => {
+  const logoPath = process.env.APPLE_PASS_LOGO_PATH;
+  const iconPath = process.env.APPLE_PASS_ICON_PATH;
+  const stripPath = process.env.APPLE_PASS_STRIP_PATH;
+  
+  const result = {
+    env: {
+      logoPath,
+      iconPath,
+      stripPath
+    },
+    exists: {
+      logo: logoPath ? fs.existsSync(logoPath) : false,
+      icon: iconPath ? fs.existsSync(iconPath) : false,
+      strip: stripPath ? fs.existsSync(stripPath) : false
+    },
+    filesInSrc: []
+  };
+  
+  try {
+    const allFiles = fs.readdirSync('/opt/render/project/src');
+    result.filesInSrc = allFiles.filter(f => 
+      f.toLowerCase().includes('logo') || 
+      f.toLowerCase().includes('osc') ||
+      f.endsWith('.png')
+    );
+  } catch (e) {
+    result.error = e.message;
+  }
+  
+  res.json(result);
+});
+
 app.post("/admin/google-wallet/brand-class", async (req, res) => {
   try {
     const token = (req.get("x-admin-token") || "").trim();
@@ -920,134 +1008,186 @@ app.post("/admin/google-wallet/brand-class", async (req, res) => {
     if (!adminToken || token !== adminToken) return res.status(401).json({ error: "Unauthorized" });
 
     const issuerId = String(process.env.GOOGLE_ISSUER_ID || "").trim();
-    const classId = `${issuerId}.MembershipCard`;
+    if (!issuerId) return res.status(400).json({ error: "GOOGLE_ISSUER_ID not set" });
+
+    const classSuffix = req.body.classSuffix || "MembershipCard";
+    const classId = `${issuerId}.${classSuffix}`;
+
     const accessToken = await getGoogleAccessToken();
-    const logoUri = process.env.OSC_LOGO_URL;
-    const heroUri = process.env.OSC_HERO_URL;
 
-    console.log("🔍 DEBUG - logoUri:", logoUri);
-    console.log("🔍 DEBUG - heroUri:", heroUri);
-    console.log("🔍 DEBUG - logoUri valid?", logoUri?.startsWith("https://"));
-    console.log("🔍 DEBUG - heroUri valid?", heroUri?.startsWith("https://"));
+    const classUrl = `https://walletobjects.googleapis.com/walletobjects/v1/genericClass/${classId}`;
+    const checkRes = await fetch(classUrl, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
 
-    if (!logoUri || !logoUri.startsWith("https://")) {
-      console.warn("⚠️  OSC_LOGO_URL is missing or not HTTPS — logo will not render");
-    }
-    if (!heroUri || !heroUri.startsWith("https://")) {
-      console.warn("⚠️  OSC_HERO_URL is missing or not HTTPS — hero image will not render");
+    let existingVersion = 0;
+    if (checkRes.ok) {
+      const existing = await checkRes.json();
+      existingVersion = parseInt(existing.version || "0", 10);
     }
 
-    const body = {
+    const payload = {
       id: classId,
-      issuerName: "Odivelas Sports Club",
-      // GenericClass only supports layout template and shared data - NO visual fields
+      version: String(existingVersion + 1),
       classTemplateInfo: {
         cardTemplateOverride: {
-          cardRowTemplateInfos: [{
-            threeItems: {
-              startItem:  { firstValue: { fields: [{ fieldPath: "object.textModulesData['memberNumber']" }] } },
-              middleItem: { firstValue: { fields: [{ fieldPath: "object.textModulesData['type']" }] } },
-              endItem:    { firstValue: { fields: [{ fieldPath: "object.textModulesData['validUntil']" }] } }
-            }
-          }]
+          cardRowTemplateInfos: [
+            { oneItem: { item: { firstValue: { fields: [{ fieldPath: "class.genericType" }] } } } },
+            { twoItems: { startItem: { firstValue: { fields: [{ fieldPath: "object.subheader" }] } }, endItem: { firstValue: { fields: [{ fieldPath: "object.header" }] } } } }
+          ]
         }
-      },
-      // Define the field metadata (headers only) at class level
-      textModulesData: [
-        { id: "memberNumber", header: "Nº" },
-        { id: "type",         header: "Tipo" },
-        { id: "validUntil",   header: "Válido até" }
-      ]
+      }
     };
 
-    console.log("🔍 DEBUG - Full body being sent to Google:");
-    console.log(JSON.stringify(body, null, 2));
+    const method = checkRes.ok ? "PUT" : "POST";
+    const url = checkRes.ok
+      ? classUrl
+      : "https://walletobjects.googleapis.com/walletobjects/v1/genericClass";
 
-    const url = `https://walletobjects.googleapis.com/walletobjects/v1/genericClass/${encodeURIComponent(classId)}`;
-
-    // Try POST first to force full class creation with all fields
-    let r = await fetch("https://walletobjects.googleapis.com/walletobjects/v1/genericClass", {
-      method: "POST",
+    const res2 = await fetch(url, {
+      method,
       headers: {
         Authorization: `Bearer ${accessToken}`,
         "Content-Type": "application/json",
       },
-      // Try without reviewStatus - let Google default it to DRAFT
-      body: JSON.stringify(body),
+      body: JSON.stringify(payload),
     });
 
-    // If class already exists (409), try PATCH
-    if (r.status === 409) {
-      console.log("⚠️  Class already exists, trying PATCH...");
-      r = await fetch(url, {
-        method: "PATCH",
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(body),
-      });
+    if (!res2.ok) {
+      const text = await res2.text();
+      return res.status(res2.status).json({ error: text });
     }
 
-    const txt = await r.text();
-    if (!r.ok) return res.status(r.status).send(txt);
-    return res.json({ ok: true, classId, updated: JSON.parse(txt) });
+    const data = await res2.json();
+    res.json({ message: `Class ${method === "PUT" ? "updated" : "created"}`, data });
   } catch (e) {
-    return res.status(500).json({ error: String(e.message || e) });
+    res.status(500).json({ error: e.message });
   }
 });
 
-app.get("/admin/google-wallet/get-class", async (req, res) => {
+app.patch("/admin/google-wallet/brand-class", async (req, res) => {
   try {
     const token = (req.get("x-admin-token") || "").trim();
-    if (!process.env.ADMIN_TOKEN || token !== String(process.env.ADMIN_TOKEN).trim()) {
-      return res.status(401).json({ error: "Unauthorized" });
-    }
+    const adminToken = String(process.env.ADMIN_TOKEN || "").trim();
+    if (!adminToken || token !== adminToken) return res.status(401).json({ error: "Unauthorized" });
 
-    const issuerId = process.env.GOOGLE_ISSUER_ID;
-    const classId = `${issuerId}.MembershipCard`;
+    const issuerId = String(process.env.GOOGLE_ISSUER_ID || "").trim();
+    if (!issuerId) return res.status(400).json({ error: "GOOGLE_ISSUER_ID not set" });
+
+    const classSuffix = req.body.classSuffix || "MembershipCard";
+    const classId = `${issuerId}.${classSuffix}`;
+
     const accessToken = await getGoogleAccessToken();
 
-    const r = await fetch(
-      `https://walletobjects.googleapis.com/walletobjects/v1/genericClass/${encodeURIComponent(classId)}`,
-      { headers: { Authorization: `Bearer ${accessToken}` } }
-    );
+    const classUrl = `https://walletobjects.googleapis.com/walletobjects/v1/genericClass/${classId}`;
+    const checkRes = await fetch(classUrl, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
 
-    const txt = await r.text();
-    return res.status(r.status).send(txt);
+    if (!checkRes.ok) {
+      return res.status(404).json({ error: "Class not found" });
+    }
+
+    const existing = await checkRes.json();
+    const currentVersion = parseInt(existing.version || "0", 10);
+
+    const payload = {
+      ...existing,
+      version: String(currentVersion + 1),
+      classTemplateInfo: {
+        cardTemplateOverride: {
+          cardRowTemplateInfos: [
+            { oneItem: { item: { firstValue: { fields: [{ fieldPath: "class.genericType" }] } } } },
+            { twoItems: { startItem: { firstValue: { fields: [{ fieldPath: "object.subheader" }] } }, endItem: { firstValue: { fields: [{ fieldPath: "object.header" }] } } } }
+          ]
+        }
+      }
+    };
+
+    const res2 = await fetch(classUrl, {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!res2.ok) {
+      const text = await res2.text();
+      return res.status(res2.status).json({ error: text });
+    }
+
+    const data = await res2.json();
+    res.json({ message: "Class updated", data });
   } catch (e) {
-    res.status(500).json({ error: String(e.message || e) });
+    res.status(500).json({ error: e.message });
   }
 });
 
 app.delete("/admin/google-wallet/delete-class", async (req, res) => {
   try {
     const token = (req.get("x-admin-token") || "").trim();
-    if (!process.env.ADMIN_TOKEN || token !== String(process.env.ADMIN_TOKEN).trim()) {
-      return res.status(401).json({ error: "Unauthorized" });
-    }
+    const adminToken = String(process.env.ADMIN_TOKEN || "").trim();
+    if (!adminToken || token !== adminToken) return res.status(401).json({ error: "Unauthorized" });
 
-    const issuerId = process.env.GOOGLE_ISSUER_ID;
-    const classId = `${issuerId}.MembershipCard`;
+    const issuerId = String(process.env.GOOGLE_ISSUER_ID || "").trim();
+    if (!issuerId) return res.status(400).json({ error: "GOOGLE_ISSUER_ID not set" });
+
+    const classSuffix = req.query.classSuffix || "MembershipCard";
+    const classId = `${issuerId}.${classSuffix}`;
+
     const accessToken = await getGoogleAccessToken();
 
-    const r = await fetch(
-      `https://walletobjects.googleapis.com/walletobjects/v1/genericClass/${encodeURIComponent(classId)}`,
-      { 
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${accessToken}` } 
-      }
-    );
+    const res2 = await fetch(`https://walletobjects.googleapis.com/walletobjects/v1/genericClass/${classId}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
 
-    const txt = await r.text();
-    if (!r.ok) {
-      return res.status(r.status).json({ error: txt });
+    if (!res2.ok) {
+      const text = await res2.text();
+      return res.status(res2.status).json({ error: text });
     }
-    return res.json({ ok: true, deleted: classId, response: txt });
+
+    res.json({ message: "Class deleted" });
   } catch (e) {
-    res.status(500).json({ error: String(e.message || e) });
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/admin/google-wallet/get-class", async (req, res) => {
+  try {
+    const token = (req.get("x-admin-token") || "").trim();
+    const adminToken = String(process.env.ADMIN_TOKEN || "").trim();
+    if (!adminToken || token !== adminToken) return res.status(401).json({ error: "Unauthorized" });
+
+    const issuerId = String(process.env.GOOGLE_ISSUER_ID || "").trim();
+    if (!issuerId) return res.status(400).json({ error: "GOOGLE_ISSUER_ID not set" });
+
+    const classSuffix = req.query.classSuffix || "MembershipCard";
+    const classId = `${issuerId}.${classSuffix}`;
+
+    const accessToken = await getGoogleAccessToken();
+
+    const res2 = await fetch(`https://walletobjects.googleapis.com/walletobjects/v1/genericClass/${classId}`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+
+    if (!res2.ok) {
+      return res.status(res2.status).json({ error: await res2.text() });
+    }
+
+    const data = await res2.json();
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`OSC Pass Service running on ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`Server listening on port ${PORT}`);
+});
