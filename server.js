@@ -380,22 +380,25 @@ async function generateApplePass(record) {
     };
 
     // Add logo/icon if available
-    const logoPath = process.env.APPLE_PASS_LOGO_PATH;
-    if (logoPath && fs.existsSync(logoPath)) {
-      const logoData = fs.readFileSync(logoPath);
+    const logoPath = process.env.APPLE_PASS_LOGO_PATH || process.env.APPLE_PASS_ICON_PATH;
+    const stripPath = process.env.APPLE_PASS_STRIP_PATH;
+    
+    // Use osc logo.png for both icon and strip
+    const oscLogoPath = logoPath || stripPath;
+    
+    if (oscLogoPath && fs.existsSync(oscLogoPath)) {
+      const logoData = fs.readFileSync(oscLogoPath);
+      
+      // Add as icon (square logo for top-left)
       fs.writeFileSync(`${tempDir}/icon.png`, logoData);
       fs.writeFileSync(`${tempDir}/icon@2x.png`, logoData);
       manifest["icon.png"] = crypto.createHash('sha1').update(logoData).digest('hex');
       manifest["icon@2x.png"] = manifest["icon.png"];
-    }
-
-    // Add strip if available
-    const stripPath = process.env.APPLE_PASS_STRIP_PATH;
-    if (stripPath && fs.existsSync(stripPath)) {
-      const stripData = fs.readFileSync(stripPath);
-      fs.writeFileSync(`${tempDir}/strip.png`, stripData);
-      fs.writeFileSync(`${tempDir}/strip@2x.png`, stripData);
-      manifest["strip.png"] = crypto.createHash('sha1').update(stripData).digest('hex');
+      
+      // Add as strip (wide banner)
+      fs.writeFileSync(`${tempDir}/strip.png`, logoData);
+      fs.writeFileSync(`${tempDir}/strip@2x.png`, logoData);
+      manifest["strip.png"] = crypto.createHash('sha1').update(logoData).digest('hex');
       manifest["strip@2x.png"] = manifest["strip.png"];
     }
 
