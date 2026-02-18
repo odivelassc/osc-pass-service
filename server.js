@@ -6,7 +6,6 @@ const path = require("path");
 const jwt = require("jsonwebtoken");
 const { GoogleAuth } = require("google-auth-library");
 const { fetch } = require("undici");
-const { PKPass } = require("passkit-generator");
 
 const app = express();
 app.use(express.json());
@@ -192,6 +191,10 @@ function makeSaveToGoogleWalletUrl({ objectId, classId, origin }) {
 }
 
 async function generateApplePass(record) {
+  const crypto = require('crypto');
+  const archiver = require('archiver');
+  const { Readable } = require('stream');
+  
   const certPath = process.env.APPLE_PASS_CERT_PATH;
   const keyPath = process.env.APPLE_PASS_KEY_PATH;
   const wwdrPath = process.env.APPLE_WWDR_CERT_PATH;
@@ -199,134 +202,135 @@ async function generateApplePass(record) {
   const teamId = process.env.APPLE_TEAM_ID;
 
   if (!certPath || !keyPath || !wwdrPath || !passTypeId || !teamId) {
-    throw new Error("Missing Apple Wallet configuration in environment variables");
+    throw new Error("Missing Apple Wallet configuration");
   }
 
-  // Initialize pass with basic structure
-  const pass = new PKPass({
+  // Create pass.json manually
+  const passJson = {
+    formatVersion: 1,
     passTypeIdentifier: passTypeId,
     teamIdentifier: teamId,
     organizationName: "Odivelas Sports Club",
-    description: "Cartão de Sócio",
     serialNumber: record.token,
+    description: "Cartão de Sócio",
     backgroundColor: "rgb(0, 0, 0)",
     foregroundColor: "rgb(255, 255, 255)",
     labelColor: "rgb(255, 255, 255)",
-    logoText: "ODIVELAS SPORTS CLUB"
-  }, {
-    wwdr: fs.readFileSync(wwdrPath),
-    signerCert: fs.readFileSync(certPath),
-    signerKey: fs.readFileSync(keyPath)
-  });
-
-  // Set pass type
-  pass.type = "storeCard";
-
-  // Header fields
-  pass.headerFields.push({
-    key: "member-status",
-    label: "ESTADO",
-    value: record.status === "active" ? "ATIVO" : "INATIVO"
-  });
-
-  // Primary fields
-  pass.primaryFields.push({
-    key: "member-name",
-    label: "MEMBRO",
-    value: record.full_name
-  });
-
-  // Secondary fields (3-column row)
-  pass.secondaryFields.push(
-    {
-      key: "member-number",
-      label: "Nº",
-      value: String(record.member_number),
-      textAlignment: "PKTextAlignmentLeft"
+    logoText: "ODIVELAS SPORTS CLUB",
+    storeCard: {
+      headerFields: [{
+        key: "member-status",
+        label: "ESTADO",
+        value: record.status === "active" ? "ATIVO" : "INATIVO"
+      }],
+      primaryFields: [{
+        key: "member-name",
+        label: "MEMBRO",
+        value: record.full_name
+      }],
+      secondaryFields: [
+        {
+          key: "member-number",
+          label: "Nº",
+          value: String(record.member_number),
+          textAlignment: "PKTextAlignmentLeft"
+        },
+        {
+          key: "member-type",
+          label: "Tipo",
+          value: record.member_type || "Sócio",
+          textAlignment: "PKTextAlignmentCenter"
+        },
+        {
+          key: "valid-until",
+          label: "Válido até",
+          value: record.valid_until || "—",
+          textAlignment: "PKTextAlignmentRight"
+        }
+      ],
+      backFields: [
+        {
+          key: "full-name",
+          label: "NOME COMPLETO",
+          value: record.full_name
+        },
+        {
+          key: "member-id",
+          label: "ID DE MEMBRO",
+          value: record.member_id
+        },
+        {
+          key: "card-url",
+          label: "CARTÃO DIGITAL",
+          value: record.card_public_url
+        },
+        {
+          key: "validation-url",
+          label: "URL DE VALIDAÇÃO",
+          value: record.qr_validation_url
+        }
+      ]
     },
-    {
-      key: "member-type",
-      label: "Tipo",
-      value: record.member_type || "Sócio",
-      textAlignment: "PKTextAlignmentCenter"
-    },
-    {
-      key: "valid-until",
-      label: "Válido até",
-      value: record.valid_until || "—",
-      textAlignment: "PKTextAlignmentRight"
+    barcode: {
+      format: "PKBarcodeFormatQR",
+      message: record.qr_validation_url,
+      messageEncoding: "iso-8859-1",
+      altText: `Nº ${record.member_number}`
     }
-  );
+  };
 
-  // Back fields
-  pass.backFields.push(
-    {
-      key: "full-name",
-      label: "NOME COMPLETO",
-      value: record.full_name
-    },
-    {
-      key: "member-id",
-      label: "ID DE MEMBRO",
-      value: record.member_id
-    },
-    {
-      key: "card-url",
-      label: "CARTÃO DIGITAL",
-      value: record.card_public_url
-    },
-    {
-      key: "validation-url",
-      label: "URL DE VALIDAÇÃO",
-      value: record.qr_validation_url
-    }
-  );
+  const passJsonStr = JSON.stringify(passJson, null, 2);
+  
+  // Create manifest with SHA1 hashes
+  const manifest = {
+    "pass.json": crypto.createHash('sha1').update(passJsonStr).digest('hex')
+  };
 
-  // Barcode
-  pass.setBarcodes({
-    format: "PKBarcodeFormatQR",
-    message: record.qr_validation_url,
-    messageEncoding: "iso-8859-1",
-    altText: `Nº ${record.member_number}`
-  });
-
-  // Add logos - REQUIRED
+  // Add logo if available
   const logoPath = process.env.APPLE_PASS_LOGO_PATH;
-  const iconPath = process.env.APPLE_PASS_ICON_PATH || logoPath;
-  const stripPath = process.env.APPLE_PASS_STRIP_PATH;
-  const footerPath = process.env.APPLE_PASS_FOOTER_PATH;
-
-  if (!logoPath || !fs.existsSync(logoPath)) {
-    throw new Error(`Logo file not found at: ${logoPath}. Apple Wallet requires a logo.`);
+  if (logoPath && fs.existsSync(logoPath)) {
+    const logoData = fs.readFileSync(logoPath);
+    manifest["logo.png"] = crypto.createHash('sha1').update(logoData).digest('hex');
+    manifest["logo@2x.png"] = manifest["logo.png"];
+    manifest["icon.png"] = manifest["logo.png"];
+    manifest["icon@2x.png"] = manifest["logo.png"];
   }
 
-  // Add logo (required)
-  pass.addBuffer("logo.png", fs.readFileSync(logoPath));
-  pass.addBuffer("logo@2x.png", fs.readFileSync(logoPath));
-  pass.addBuffer("logo@3x.png", fs.readFileSync(logoPath));
+  const manifestStr = JSON.stringify(manifest, null, 2);
 
-  // Add icon (required for wallet list view)
-  if (iconPath && fs.existsSync(iconPath)) {
-    pass.addBuffer("icon.png", fs.readFileSync(iconPath));
-    pass.addBuffer("icon@2x.png", fs.readFileSync(iconPath));
-    pass.addBuffer("icon@3x.png", fs.readFileSync(iconPath));
-  }
+  // Sign the manifest
+  const certData = fs.readFileSync(certPath, 'utf8');
+  const keyData = fs.readFileSync(keyPath, 'utf8');
+  const wwdrData = fs.readFileSync(wwdrPath, 'utf8');
 
-  // Strip image (optional)
-  if (stripPath && fs.existsSync(stripPath)) {
-    pass.addBuffer("strip.png", fs.readFileSync(stripPath));
-    pass.addBuffer("strip@2x.png", fs.readFileSync(stripPath));
-    pass.addBuffer("strip@3x.png", fs.readFileSync(stripPath));
-  }
+  const signer = crypto.createSign('sha1');
+  signer.update(manifestStr);
+  const signature = signer.sign(keyData);
 
-  // Footer image (optional)
-  if (footerPath && fs.existsSync(footerPath)) {
-    pass.addBuffer("footer.png", fs.readFileSync(footerPath));
-    pass.addBuffer("footer@2x.png", fs.readFileSync(footerPath));
-    pass.addBuffer("footer@3x.png", fs.readFileSync(footerPath));
-  }
+  // Create the .pkpass zip
+  return new Promise((resolve, reject) => {
+    const archive = archiver('zip', { zlib: { level: 9 } });
+    const chunks = [];
+    
+    archive.on('data', chunk => chunks.push(chunk));
+    archive.on('end', () => resolve(Buffer.concat(chunks)));
+    archive.on('error', reject);
 
-  return pass.getAsBuffer();
+    // Add files to archive
+    archive.append(passJsonStr, { name: 'pass.json' });
+    archive.append(manifestStr, { name: 'manifest.json' });
+    archive.append(signature, { name: 'signature' });
+
+    if (logoPath && fs.existsSync(logoPath)) {
+      const logoData = fs.readFileSync(logoPath);
+      archive.append(logoData, { name: 'logo.png' });
+      archive.append(logoData, { name: 'logo@2x.png' });
+      archive.append(logoData, { name: 'icon.png' });
+      archive.append(logoData, { name: 'icon@2x.png' });
+    }
+
+    archive.finalize();
+  });
 }
 
 app.post("/api/passes/issue", async (req, res) => {
@@ -338,11 +342,16 @@ app.post("/api/passes/issue", async (req, res) => {
     });
   }
 
-  for (const rec of store.values()) {
-    if (rec.member_id === member_id) return res.json(rec);
+  // Check if member already exists - if so, update their data
+  let existingToken = null;
+  for (const [token, rec] of store.entries()) {
+    if (rec.member_id === member_id) {
+      existingToken = token;
+      break;
+    }
   }
 
-  const token = uuidv4().replaceAll("-", "");
+  const token = existingToken || uuidv4().replaceAll("-", "");
   const baseUrl = process.env.PUBLIC_BASE_URL || `http://localhost:${process.env.PORT || 3000}`;
 
   const payload = {
@@ -350,7 +359,7 @@ app.post("/api/passes/issue", async (req, res) => {
     member_id,
     full_name,
     member_number,
-    member_type: member_type || "Sócio",  // Default to "Sócio" if not provided
+    member_type: member_type || "Sócio",
     valid_until: valid_until || null,
     status: status || "active",
     card_public_url: `${baseUrl}/c/${token}`,
