@@ -499,6 +499,31 @@ async function generateApplePass(record) {
   }
 }
 
+app.delete("/api/passes/:member_id", async (req, res) => {
+  try {
+    const { member_id } = req.params;
+    
+    // Find the pass by member_id
+    const pass = await findPassByMemberId(member_id);
+    
+    if (!pass) {
+      return res.status(404).json({ error: "Pass not found" });
+    }
+    
+    // Delete from database
+    await pool.query('DELETE FROM passes WHERE member_id = $1', [member_id]);
+    
+    res.json({ 
+      success: true, 
+      message: "Pass deleted successfully",
+      deleted_token: pass.token 
+    });
+  } catch (error) {
+    console.error('Error deleting pass:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.post("/api/passes/issue", async (req, res) => {
   const { member_id, full_name, member_number, member_type, valid_until, status } = req.body || {};
 
