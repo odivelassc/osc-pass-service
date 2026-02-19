@@ -562,7 +562,7 @@ app.post("/api/passes/issue", async (req, res) => {
     try {
       const issuerId = process.env.GOOGLE_ISSUER_ID;
       const origin = process.env.PUBLIC_BASE_URL || "https://osc-pass-service.onrender.com";
-      const classSuffix = "MembershipCard";
+      const classSuffix = "MembershipCardV2";
 
       if (!issuerId) {
         googleWalletError = "GOOGLE_ISSUER_ID env var is not set";
@@ -1015,7 +1015,7 @@ app.post("/admin/google-wallet/brand-class", async (req, res) => {
     const issuerId = String(process.env.GOOGLE_ISSUER_ID || "").trim();
     if (!issuerId) return res.status(400).json({ error: "GOOGLE_ISSUER_ID not set" });
 
-    const classSuffix = req.body.classSuffix || "MembershipCard";
+    const classSuffix = req.body.classSuffix || "MembershipCardV2";
     const classId = `${issuerId}.${classSuffix}`;
 
     const accessToken = await getGoogleAccessToken();
@@ -1080,7 +1080,7 @@ app.patch("/admin/google-wallet/brand-class", async (req, res) => {
     const issuerId = String(process.env.GOOGLE_ISSUER_ID || "").trim();
     if (!issuerId) return res.status(400).json({ error: "GOOGLE_ISSUER_ID not set" });
 
-    const classSuffix = req.body.classSuffix || "MembershipCard";
+    const classSuffix = req.body.classSuffix || "MembershipCardV2";
     const classId = `${issuerId}.${classSuffix}`;
 
     const accessToken = await getGoogleAccessToken();
@@ -1141,7 +1141,7 @@ app.delete("/admin/google-wallet/delete-class", async (req, res) => {
     const issuerId = String(process.env.GOOGLE_ISSUER_ID || "").trim();
     if (!issuerId) return res.status(400).json({ error: "GOOGLE_ISSUER_ID not set" });
 
-    const classSuffix = req.query.classSuffix || "MembershipCard";
+    const classSuffix = req.query.classSuffix || "MembershipCardV2";
     const classId = `${issuerId}.${classSuffix}`;
 
     const accessToken = await getGoogleAccessToken();
@@ -1171,7 +1171,7 @@ app.get("/admin/google-wallet/get-class", async (req, res) => {
     const issuerId = String(process.env.GOOGLE_ISSUER_ID || "").trim();
     if (!issuerId) return res.status(400).json({ error: "GOOGLE_ISSUER_ID not set" });
 
-    const classSuffix = req.query.classSuffix || "MembershipCard";
+    const classSuffix = req.query.classSuffix || "MembershipCardV2";
     const classId = `${issuerId}.${classSuffix}`;
 
     const accessToken = await getGoogleAccessToken();
