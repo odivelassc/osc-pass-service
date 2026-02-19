@@ -37,55 +37,10 @@ function escapeHtml(str) {
   }[m]));
 }
 
-// ============ TOTP Security Functions ============
+// ============ TOTP Security Functions (HEX-based, 10-second intervals, 8 digits) ============
 
-function base32Encode(buffer) {
-  const base32Chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
-  let bits = 0;
-  let value = 0;
-  let output = '';
-  
-  for (let i = 0; i < buffer.length; i++) {
-    value = (value << 8) | buffer[i];
-    bits += 8;
-    
-    while (bits >= 5) {
-      output += base32Chars[(value >>> (bits - 5)) & 31];
-      bits -= 5;
-    }
-  }
-  
-  if (bits > 0) {
-    output += base32Chars[(value << (5 - bits)) & 31];
-  }
-  
-  return output;
-}
-
-function generateTOTPSecret() {
-  return base32Encode(crypto.randomBytes(20));
-}
-
-function generateTOTP(secret, timeStep = 30, digits = 6) {
-  const base32Chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
-  let bits = 0;
-  let value = 0;
-  const bytes = [];
-  
-  for (let i = 0; i < secret.length; i++) {
-    const idx = base32Chars.indexOf(secret[i].toUpperCase());
-    if (idx === -1) continue;
-    
-    value = (value << 5) | idx;
-    bits += 5;
-    
-    if (bits >= 8) {
-      bytes.push((value >>> (bits - 8)) & 255);
-      bits -= 8;
-    }
-  }
-  
-  const key = Buffer.from(bytes);
+function generateTOTP(hexSecret, timeStep = 10, digits = 8) {
+  const key = Buffer.from(hexSecret, 'hex');
   const time = Math.floor(Date.now() / 1000 / timeStep);
   const timeBuffer = Buffer.alloc(8);
   timeBuffer.writeBigUInt64BE(BigInt(time));
@@ -105,31 +60,16 @@ function generateTOTP(secret, timeStep = 30, digits = 6) {
   return String(code).padStart(digits, '0');
 }
 
-function verifyTOTP(secret, token, window = 1) {
+function verifyTOTP(hexSecret, token, window = 1) {
+  const timeStep = 10; // 10 seconds
+  const digits = 8;
+  
   for (let i = -window; i <= window; i++) {
-    const timeStep = Math.floor(Date.now() / 1000 / 30) + i;
+    const time = Math.floor(Date.now() / 1000 / timeStep) + i;
     const timeBuffer = Buffer.alloc(8);
-    timeBuffer.writeBigUInt64BE(BigInt(timeStep));
+    timeBuffer.writeBigUInt64BE(BigInt(time));
     
-    const base32Chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
-    let bits = 0;
-    let value = 0;
-    const bytes = [];
-    
-    for (let j = 0; j < secret.length; j++) {
-      const idx = base32Chars.indexOf(secret[j].toUpperCase());
-      if (idx === -1) continue;
-      
-      value = (value << 5) | idx;
-      bits += 5;
-      
-      if (bits >= 8) {
-        bytes.push((value >>> (bits - 8)) & 255);
-        bits -= 8;
-      }
-    }
-    
-    const key = Buffer.from(bytes);
+    const key = Buffer.from(hexSecret, 'hex');
     const hmac = crypto.createHmac('sha1', key);
     hmac.update(timeBuffer);
     const hash = hmac.digest();
@@ -140,9 +80,9 @@ function verifyTOTP(secret, token, window = 1) {
       ((hash[offset + 1] & 0xff) << 16) |
       ((hash[offset + 2] & 0xff) << 8) |
       (hash[offset + 3] & 0xff)
-    ) % 1000000;
+    ) % Math.pow(10, digits);
     
-    if (String(code).padStart(6, '0') === token) {
+    if (String(code).padStart(digits, '0') === token) {
       return true;
     }
   }
@@ -220,6 +160,15 @@ async function getGoogleAccessToken() {
   return t.token;
 }
 
+// Generate HEX secret from member_id (matching previous implementation)
+function generateHexSecret(memberId) {
+  const salt = process.env.TOTP_SALT || "osc-default-salt-2025";
+  const hmac = crypto.createHmac('sha1', salt);
+  hmac.update(memberId);
+  const hash = hmac.digest('hex');
+  return hash.substring(0, 40); // 20 bytes = 40 hex chars
+}
+
 async function upsertGenericObject({ issuerId, classSuffix, objectSuffix, record }) {
   const accessToken = await getGoogleAccessToken();
 
@@ -250,8 +199,25 @@ async function upsertGenericObject({ issuerId, classSuffix, objectSuffix, record
           classTemplateInfo: {
             cardTemplateOverride: {
               cardRowTemplateInfos: [
-                { oneItem: { item: { firstValue: { fields: [{ fieldPath: "class.genericType" }] } } } },
-                { twoItems: { startItem: { firstValue: { fields: [{ fieldPath: "object.subheader" }] } }, endItem: { firstValue: { fields: [{ fieldPath: "object.header" }] } } } }
+                {
+                  threeItems: {
+                    startItem: {
+                      firstValue: {
+                        fields: [{ fieldPath: "object.textModulesData['number']" }]
+                      }
+                    },
+                    middleItem: {
+                      firstValue: {
+                        fields: [{ fieldPath: "object.textModulesData['type']" }]
+                      }
+                    },
+                    endItem: {
+                      firstValue: {
+                        fields: [{ fieldPath: "object.textModulesData['valid_until']" }]
+                      }
+                    }
+                  }
+                }
               ]
             }
           }
@@ -272,11 +238,15 @@ async function upsertGenericObject({ issuerId, classSuffix, objectSuffix, record
 
   const existingData = checkRes.ok ? await checkRes.json() : null;
 
+  // Generate HEX secret for this member
+  const hexSecret = generateHexSecret(record.member_id);
+  const baseUrl = process.env.PUBLIC_BASE_URL || "https://card.odivelassc.pt";
+
   const objectPayload = {
     id: objectId,
     classId,
     state: record.status === "active" ? "ACTIVE" : "INACTIVE",
-    genericType: "GENERIC_TYPE_UNSPECIFIED",
+    genericType: "GENERIC_OTHER",
     cardTitle: { 
       defaultValue: { language: "pt-PT", value: "ODIVELAS SPORTS CLUB" } 
     },
@@ -287,10 +257,20 @@ async function upsertGenericObject({ issuerId, classSuffix, objectSuffix, record
       defaultValue: { language: "pt-PT", value: "Membro" } 
     },
     hexBackgroundColor: "#000000",
-    barcode: {
+    rotatingBarcode: {
       type: "QR_CODE",
-      value: record.qr_validation_url,
-      alternateText: `Nº ${record.member_number}`,
+      valuePattern: `${baseUrl}/v/${record.token}?code={totp_value_0}`,
+      alternateText: " ",
+      totpDetails: {
+        periodMillis: 10000,
+        algorithm: "TOTP_SHA1",
+        parameters: [
+          {
+            key: hexSecret,
+            valueLength: 8
+          }
+        ]
+      }
     },
     logo: {
       sourceUri: {
@@ -318,19 +298,19 @@ async function upsertGenericObject({ issuerId, classSuffix, objectSuffix, record
     },
     textModulesData: [
       {
+        id: "number",
         header: "Nº",
         body: String(record.member_number),
-        id: "member_number",
       },
       {
+        id: "type",
         header: "Tipo",
-        body: record.member_type || "Sócio",
-        id: "member_type",
+        body: record.member_type || "SÓCIO",
       },
       {
+        id: "valid_until",
         header: "Válido até",
         body: record.valid_until || "—",
-        id: "valid_until",
       },
     ],
   };
@@ -532,7 +512,7 @@ app.post("/api/passes/issue", async (req, res) => {
     const existingPass = await findPassByMemberId(member_id);
     
     const token = existingPass ? existingPass.token : uuidv4().replaceAll("-", "");
-    const totpSecret = existingPass ? existingPass.totp_secret : generateTOTPSecret();
+    const totpSecret = existingPass ? existingPass.totp_secret : generateHexSecret(member_id);
     const baseUrl = process.env.PUBLIC_BASE_URL || `http://localhost:${process.env.PORT || 3000}`;
 
     const payload = {
@@ -540,7 +520,7 @@ app.post("/api/passes/issue", async (req, res) => {
       member_id,
       full_name,
       member_number,
-      member_type: member_type || "Sócio",
+      member_type: member_type || "SÓCIO",
       valid_until: valid_until || null,
       status: status || "active",
       totp_secret: totpSecret,
@@ -744,7 +724,6 @@ app.get("/c/:token", async (req, res) => {
   
   const qrDataUrl = await QRCode.toDataURL(validationUrlWithTOTP);
   const logoUrl = process.env.OSC_LOGO_URL || "";
-  const wideLogoUrl = process.env.OSC_WIDE_LOGO_URL || process.env.OSC_HERO_URL || "";
 
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.send(`
@@ -763,92 +742,65 @@ app.get("/c/:token", async (req, res) => {
     
     body {
       font-family: system-ui, -apple-system, sans-serif;
-      background: #f5f5f5;
+      background: #000;
+      color: #fff;
       min-height: 100vh;
       display: flex;
+      flex-direction: column;
       align-items: center;
       justify-content: center;
       padding: 20px;
     }
     
-    .card-container {
-      background: #000;
-      border-radius: 20px;
-      padding: 40px 30px;
-      max-width: 420px;
-      width: 100%;
-      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-      text-align: center;
-      color: #fff;
-    }
-    
-    .card-header {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 15px;
+    .logo {
+      max-width: 150px;
+      height: auto;
       margin-bottom: 30px;
-      padding-bottom: 20px;
-      border-bottom: 1px solid #333;
-    }
-    
-    .header-logo {
-      width: 50px;
-      height: 50px;
-      border-radius: 50%;
-      background: #fff;
-      padding: 5px;
-    }
-    
-    .header-text {
-      font-size: 18px;
-      font-weight: 700;
-      letter-spacing: 1px;
-      text-transform: uppercase;
-    }
-    
-    .member-label {
-      font-size: 14px;
-      color: #999;
-      margin-bottom: 8px;
-      text-transform: uppercase;
-      letter-spacing: 1px;
     }
     
     .member-name {
-      font-size: 36px;
+      font-size: 32px;
       font-weight: 700;
+      text-align: center;
+      margin-bottom: 8px;
+    }
+    
+    .member-subtitle {
+      font-size: 16px;
+      color: #999;
+      text-align: center;
+      margin-bottom: 30px;
+    }
+    
+    .wallet-buttons {
+      display: flex;
+      gap: 16px;
+      justify-content: center;
       margin-bottom: 40px;
-      line-height: 1.2;
+      flex-wrap: wrap;
     }
     
-    .qr-container {
-      background: #fff;
-      border-radius: 16px;
-      padding: 20px;
-      margin: 0 auto 20px;
-      width: fit-content;
-    }
-    
-    .qr-container img {
-      width: 220px;
-      height: 220px;
+    .wallet-buttons a {
       display: block;
+      transition: opacity 0.2s;
     }
     
-    .member-number {
-      font-size: 24px;
-      font-weight: 700;
-      margin: 30px 0;
-      color: #F4C400;
+    .wallet-buttons a:hover {
+      opacity: 0.8;
     }
     
-    .details-grid {
+    .wallet-buttons img {
+      height: 50px;
+      width: auto;
+    }
+    
+    .member-details {
       background: #1a1a1a;
       border-radius: 12px;
-      padding: 20px;
-      margin: 30px 0;
-      text-align: left;
+      padding: 24px;
+      max-width: 400px;
+      width: 100%;
+      margin-bottom: 30px;
     }
     
     .detail-row {
@@ -864,119 +816,81 @@ app.get("/c/:token", async (req, res) => {
     
     .detail-label {
       color: #999;
-      font-size: 13px;
+      font-size: 14px;
     }
     
     .detail-value {
       font-weight: 600;
       font-size: 14px;
-      color: #fff;
     }
     
-    .wallet-buttons {
-      display: flex;
-      gap: 12px;
-      justify-content: center;
-      margin: 30px 0;
-      flex-wrap: wrap;
+    .qr-section {
+      text-align: center;
     }
     
-    .wallet-buttons a {
-      display: block;
-      transition: transform 0.2s;
+    .qr-section img {
+      width: 200px;
+      height: 200px;
+      border-radius: 12px;
     }
     
-    .wallet-buttons a:hover {
-      transform: scale(1.05);
-    }
-    
-    .wallet-buttons img {
-      height: 48px;
-      width: auto;
-    }
-    
-    .footer-logo {
-      margin-top: 40px;
-      padding-top: 30px;
-      border-top: 1px solid #333;
-    }
-    
-    .footer-logo img {
-      max-width: 250px;
-      height: auto;
-    }
-    
-    .security-note {
+    .footer-note {
       color: #666;
-      font-size: 11px;
-      margin-top: 20px;
-      line-height: 1.4;
-    }
-    
-    .refresh-indicator {
-      color: #F4C400;
-      font-size: 12px;
-      margin-top: 8px;
+      font-size: 13px;
+      text-align: center;
+      margin-top: 30px;
+      max-width: 400px;
     }
   </style>
 </head>
 <body>
-  <div class="card-container">
-    <div class="card-header">
-      ${logoUrl ? `<img class="header-logo" src="${escapeHtml(logoUrl)}" alt="OSC" />` : ''}
-      <div class="header-text">Odivelas Sports Club</div>
-    </div>
-    
-    <div class="member-label">Membro</div>
-    <h1 class="member-name">${escapeHtml(record.full_name)}</h1>
-    
-    <div class="qr-container">
-      <img id="qrCode" src="${qrDataUrl}" alt="QR Code" />
-    </div>
-    <p class="refresh-indicator">⟳ Código renova a cada 30 segundos</p>
-    
-    <div class="member-number">Nº ${escapeHtml(record.member_number)}</div>
-    
-    <div class="details-grid">
-      <div class="detail-row">
-        <span class="detail-label">Tipo</span>
-        <span class="detail-value">${escapeHtml(record.member_type || 'Sócio')}</span>
-      </div>
-      <div class="detail-row">
-        <span class="detail-label">Válido até</span>
-        <span class="detail-value">${escapeHtml(record.valid_until || '—')}</span>
-      </div>
-      <div class="detail-row">
-        <span class="detail-label">Estado</span>
-        <span class="detail-value">${record.status === 'active' ? '✓ ATIVO' : '✗ INATIVO'}</span>
-      </div>
-    </div>
-    
-    ${record.google_wallet_url || record.apple_pkpass_url ? `
-      <div class="wallet-buttons">
-        ${record.google_wallet_url ? `
-          <a href="${escapeHtml(record.google_wallet_url)}" target="_blank">
-            <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/b/bb/Add_to_Google_Wallet_badge.svg/1280px-Add_to_Google_Wallet_badge.svg.png" alt="Add to Google Wallet" />
-          </a>
-        ` : ''}
-        ${record.apple_pkpass_url ? `
-          <a href="${escapeHtml(record.apple_pkpass_url)}">
-            <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/3/30/Add_to_Apple_Wallet_badge.svg/1280px-Add_to_Apple_Wallet_badge.svg.png" alt="Add to Apple Wallet" />
-          </a>
-        ` : ''}
-      </div>
+  ${logoUrl ? `<img class="logo" src="${escapeHtml(logoUrl)}" alt="Odivelas Sports Club" />` : ''}
+  
+  <h1 class="member-name">${escapeHtml(record.full_name)}</h1>
+  <p class="member-subtitle">Cartão de Sócio</p>
+  
+  <div class="wallet-buttons">
+    ${record.google_wallet_url ? `
+      <a href="${escapeHtml(record.google_wallet_url)}">
+        <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/b/bb/Add_to_Google_Wallet_badge.svg/1280px-Add_to_Google_Wallet_badge.svg.png" alt="Add to Google Wallet" />
+      </a>
     ` : ''}
-    
-    ${wideLogoUrl ? `
-      <div class="footer-logo">
-        <img src="${escapeHtml(wideLogoUrl)}" alt="Odivelas Sports Club" />
-      </div>
+    ${record.apple_pkpass_url ? `
+      <a href="${escapeHtml(record.apple_pkpass_url)}">
+        <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/3/30/Add_to_Apple_Wallet_badge.svg/1280px-Add_to_Apple_Wallet_badge.svg.png" alt="Add to Apple Wallet" />
+      </a>
     ` : ''}
-    
-    <p class="security-note">
-      🔒 O código QR inclui segurança TOTP que muda a cada 30 segundos para evitar fraudes.
+  </div>
+  
+  <div class="member-details">
+    <div class="detail-row">
+      <span class="detail-label">Nº Sócio</span>
+      <span class="detail-value">${escapeHtml(record.member_number)}</span>
+    </div>
+    <div class="detail-row">
+      <span class="detail-label">Tipo</span>
+      <span class="detail-value">${escapeHtml(record.member_type || 'Sócio')}</span>
+    </div>
+    <div class="detail-row">
+      <span class="detail-label">Válido até</span>
+      <span class="detail-value">${escapeHtml(record.valid_until || '—')}</span>
+    </div>
+    <div class="detail-row">
+      <span class="detail-label">Estado</span>
+      <span class="detail-value">${record.status === 'active' ? 'ATIVO' : 'INATIVO'}</span>
+    </div>
+  </div>
+  
+  <div class="qr-section">
+    <img id="qrCode" src="${qrDataUrl}" alt="QR Code de Validação" />
+    <p style="color: #999; font-size: 12px; margin-top: 8px;">
+      Código renova a cada 10 segundos
     </p>
   </div>
+  
+  <p class="footer-note">
+    Adicione este cartão à sua carteira digital para acesso rápido e validação em eventos do clube.
+  </p>
   
   <script>
     setInterval(async () => {
@@ -987,7 +901,7 @@ app.get("/c/:token", async (req, res) => {
       } catch (error) {
         console.error('Failed to refresh QR code:', error);
       }
-    }, 30000);
+    }, 10000); // Refresh every 10 seconds
   </script>
 </body>
 </html>
@@ -1004,7 +918,7 @@ app.get("/c/:token/qr", async (req, res) => {
   
   const qrDataUrl = await QRCode.toDataURL(validationUrlWithTOTP);
   
-  res.json({ qrDataUrl, expiresIn: 30 });
+  res.json({ qrDataUrl, expiresIn: 10 });
 });
 
 app.get("/apple/:token.pkpass", async (req, res) => {
