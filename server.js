@@ -744,6 +744,7 @@ app.get("/c/:token", async (req, res) => {
   
   const qrDataUrl = await QRCode.toDataURL(validationUrlWithTOTP);
   const logoUrl = process.env.OSC_LOGO_URL || "";
+  const wideLogoUrl = process.env.OSC_WIDE_LOGO_URL || process.env.OSC_HERO_URL || "";
 
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.send(`
@@ -762,65 +763,92 @@ app.get("/c/:token", async (req, res) => {
     
     body {
       font-family: system-ui, -apple-system, sans-serif;
-      background: #000;
-      color: #fff;
+      background: #f5f5f5;
       min-height: 100vh;
       display: flex;
-      flex-direction: column;
       align-items: center;
       justify-content: center;
       padding: 20px;
     }
     
-    .logo {
-      max-width: 150px;
-      height: auto;
+    .card-container {
+      background: #000;
+      border-radius: 20px;
+      padding: 40px 30px;
+      max-width: 420px;
+      width: 100%;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+      text-align: center;
+      color: #fff;
+    }
+    
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 15px;
       margin-bottom: 30px;
+      padding-bottom: 20px;
+      border-bottom: 1px solid #333;
+    }
+    
+    .header-logo {
+      width: 50px;
+      height: 50px;
+      border-radius: 50%;
+      background: #fff;
+      padding: 5px;
+    }
+    
+    .header-text {
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+    }
+    
+    .member-label {
+      font-size: 14px;
+      color: #999;
+      margin-bottom: 8px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
     }
     
     .member-name {
-      font-size: 32px;
+      font-size: 36px;
       font-weight: 700;
-      text-align: center;
-      margin-bottom: 8px;
-    }
-    
-    .member-subtitle {
-      font-size: 16px;
-      color: #999;
-      text-align: center;
-      margin-bottom: 30px;
-    }
-    
-    .wallet-buttons {
-      display: flex;
-      gap: 16px;
-      justify-content: center;
       margin-bottom: 40px;
-      flex-wrap: wrap;
+      line-height: 1.2;
     }
     
-    .wallet-buttons a {
+    .qr-container {
+      background: #fff;
+      border-radius: 16px;
+      padding: 20px;
+      margin: 0 auto 20px;
+      width: fit-content;
+    }
+    
+    .qr-container img {
+      width: 220px;
+      height: 220px;
       display: block;
-      transition: opacity 0.2s;
     }
     
-    .wallet-buttons a:hover {
-      opacity: 0.8;
+    .member-number {
+      font-size: 24px;
+      font-weight: 700;
+      margin: 30px 0;
+      color: #F4C400;
     }
     
-    .wallet-buttons img {
-      height: 50px;
-      width: auto;
-    }
-    
-    .member-details {
+    .details-grid {
       background: #1a1a1a;
       border-radius: 12px;
-      padding: 24px;
-      max-width: 400px;
-      width: 100%;
-      margin-bottom: 30px;
+      padding: 20px;
+      margin: 30px 0;
+      text-align: left;
     }
     
     .detail-row {
@@ -836,81 +864,119 @@ app.get("/c/:token", async (req, res) => {
     
     .detail-label {
       color: #999;
-      font-size: 14px;
+      font-size: 13px;
     }
     
     .detail-value {
       font-weight: 600;
       font-size: 14px;
+      color: #fff;
     }
     
-    .qr-section {
-      text-align: center;
+    .wallet-buttons {
+      display: flex;
+      gap: 12px;
+      justify-content: center;
+      margin: 30px 0;
+      flex-wrap: wrap;
     }
     
-    .qr-section img {
-      width: 200px;
-      height: 200px;
-      border-radius: 12px;
+    .wallet-buttons a {
+      display: block;
+      transition: transform 0.2s;
     }
     
-    .footer-note {
+    .wallet-buttons a:hover {
+      transform: scale(1.05);
+    }
+    
+    .wallet-buttons img {
+      height: 48px;
+      width: auto;
+    }
+    
+    .footer-logo {
+      margin-top: 40px;
+      padding-top: 30px;
+      border-top: 1px solid #333;
+    }
+    
+    .footer-logo img {
+      max-width: 250px;
+      height: auto;
+    }
+    
+    .security-note {
       color: #666;
-      font-size: 13px;
-      text-align: center;
-      margin-top: 30px;
-      max-width: 400px;
+      font-size: 11px;
+      margin-top: 20px;
+      line-height: 1.4;
+    }
+    
+    .refresh-indicator {
+      color: #F4C400;
+      font-size: 12px;
+      margin-top: 8px;
     }
   </style>
 </head>
 <body>
-  ${logoUrl ? `<img class="logo" src="${escapeHtml(logoUrl)}" alt="Odivelas Sports Club" />` : ''}
-  
-  <h1 class="member-name">${escapeHtml(record.full_name)}</h1>
-  <p class="member-subtitle">Cartão de Sócio</p>
-  
-  <div class="wallet-buttons">
-    ${record.google_wallet_url ? `
-      <a href="${escapeHtml(record.google_wallet_url)}">
-        <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/b/bb/Add_to_Google_Wallet_badge.svg/1280px-Add_to_Google_Wallet_badge.svg.png" alt="Add to Google Wallet" />
-      </a>
+  <div class="card-container">
+    <div class="card-header">
+      ${logoUrl ? `<img class="header-logo" src="${escapeHtml(logoUrl)}" alt="OSC" />` : ''}
+      <div class="header-text">Odivelas Sports Club</div>
+    </div>
+    
+    <div class="member-label">Membro</div>
+    <h1 class="member-name">${escapeHtml(record.full_name)}</h1>
+    
+    <div class="qr-container">
+      <img id="qrCode" src="${qrDataUrl}" alt="QR Code" />
+    </div>
+    <p class="refresh-indicator">⟳ Código renova a cada 30 segundos</p>
+    
+    <div class="member-number">Nº ${escapeHtml(record.member_number)}</div>
+    
+    <div class="details-grid">
+      <div class="detail-row">
+        <span class="detail-label">Tipo</span>
+        <span class="detail-value">${escapeHtml(record.member_type || 'Sócio')}</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-label">Válido até</span>
+        <span class="detail-value">${escapeHtml(record.valid_until || '—')}</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-label">Estado</span>
+        <span class="detail-value">${record.status === 'active' ? '✓ ATIVO' : '✗ INATIVO'}</span>
+      </div>
+    </div>
+    
+    ${record.google_wallet_url || record.apple_pkpass_url ? `
+      <div class="wallet-buttons">
+        ${record.google_wallet_url ? `
+          <a href="${escapeHtml(record.google_wallet_url)}" target="_blank">
+            <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/b/bb/Add_to_Google_Wallet_badge.svg/1280px-Add_to_Google_Wallet_badge.svg.png" alt="Add to Google Wallet" />
+          </a>
+        ` : ''}
+        ${record.apple_pkpass_url ? `
+          <a href="${escapeHtml(record.apple_pkpass_url)}">
+            <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/3/30/Add_to_Apple_Wallet_badge.svg/1280px-Add_to_Apple_Wallet_badge.svg.png" alt="Add to Apple Wallet" />
+          </a>
+        ` : ''}
+      </div>
     ` : ''}
-    ${record.apple_pkpass_url ? `
-      <a href="${escapeHtml(record.apple_pkpass_url)}">
-        <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/3/30/Add_to_Apple_Wallet_badge.svg/1280px-Add_to_Apple_Wallet_badge.svg.png" alt="Add to Apple Wallet" />
-      </a>
+    
+    ${wideLogoUrl ? `
+      <div class="footer-logo">
+        <img src="${escapeHtml(wideLogoUrl)}" alt="Odivelas Sports Club" />
+      </div>
     ` : ''}
-  </div>
-  
-  <div class="member-details">
-    <div class="detail-row">
-      <span class="detail-label">Nº Sócio</span>
-      <span class="detail-value">${escapeHtml(record.member_number)}</span>
-    </div>
-    <div class="detail-row">
-      <span class="detail-label">Tipo</span>
-      <span class="detail-value">${escapeHtml(record.member_type || 'Sócio')}</span>
-    </div>
-    <div class="detail-row">
-      <span class="detail-label">Válido até</span>
-      <span class="detail-value">${escapeHtml(record.valid_until || '—')}</span>
-    </div>
-    <div class="detail-row">
-      <span class="detail-label">Estado</span>
-      <span class="detail-value">${record.status === 'active' ? 'ATIVO' : 'INATIVO'}</span>
-    </div>
-  </div>
-  
-  <div class="qr-section">
-    <img id="qrCode" src="${qrDataUrl}" alt="QR Code de Validação" />
-    <p style="color: #999; font-size: 12px; margin-top: 8px;">
-      Código renova a cada 30 segundos
+    
+    <p class="security-note">
+      🔒 O código QR inclui segurança TOTP que muda a cada 30 segundos para evitar fraudes.
     </p>
   </div>
-  
-  <p class="footer-note">
-    Adicione este cartão à sua carteira digital para acesso rápido e validação em eventos do clube.
-  </p>
   
   <script>
     setInterval(async () => {
