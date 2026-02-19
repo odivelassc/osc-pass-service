@@ -241,6 +241,10 @@ async function upsertGenericObject({ issuerId, classSuffix, objectSuffix, record
   // Generate HEX secret for this member
   const hexSecret = generateHexSecret(record.member_id);
   const baseUrl = process.env.PUBLIC_BASE_URL || "https://card.odivelassc.pt";
+  
+  // Convert HEX secret to Base64 for Google Wallet API
+  const hexBuffer = Buffer.from(hexSecret, 'hex');
+  const base64Secret = hexBuffer.toString('base64');
 
   const objectPayload = {
     id: objectId,
@@ -266,7 +270,7 @@ async function upsertGenericObject({ issuerId, classSuffix, objectSuffix, record
         algorithm: "TOTP_SHA1",
         parameters: [
           {
-            key: hexSecret,
+            key: base64Secret,
             valueLength: 8
           }
         ]
