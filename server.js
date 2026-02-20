@@ -258,12 +258,6 @@ async function upsertGenericObject({ issuerId, classSuffix, objectSuffix, record
       defaultValue: { language: "pt-PT", value: "Membro" } 
     },
     hexBackgroundColor: "#000000",
-    // Static barcode fallback (always renders even if rotating fails)
-    barcode: {
-      type: "QR_CODE",
-      value: `${baseUrl}/v/${record.token}`,
-      alternateText: " "
-    },
     // Rotating barcode with TOTP (changes every 10 seconds)
     rotatingBarcode: {
       type: "QR_CODE",
@@ -572,7 +566,7 @@ app.post("/api/passes/issue", async (req, res) => {
     try {
       const issuerId = process.env.GOOGLE_ISSUER_ID;
       const origin = process.env.PUBLIC_BASE_URL || "https://osc-pass-service.onrender.com";
-      const classSuffix = "MembershipCardV2";
+      const classSuffix = "MembershipCardV3";  // Changed to V3 to force fresh class
 
       if (!issuerId) {
         googleWalletError = "GOOGLE_ISSUER_ID env var is not set";
