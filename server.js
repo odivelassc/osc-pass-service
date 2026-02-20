@@ -267,7 +267,7 @@ async function upsertGenericObject({ issuerId, classSuffix, objectSuffix, record
     // Rotating barcode with TOTP (changes every 10 seconds)
     rotatingBarcode: {
       type: "QR_CODE",
-      valuePattern: `${baseUrl}/v/${record.token}?code={totp_value_0}`,
+      valuePattern: `${baseUrl}/c/${record.token}?k={totp_value_0}`,
       alternateText: " ",
       totpDetails: {
         periodMillis: "10000",  // MUST be string per Google Wallet API spec
@@ -753,12 +753,256 @@ app.get("/c/:token", async (req, res) => {
   const record = await getPass(req.params.token);
   if (!record) return res.status(404).send("Card not found");
 
+  // Check if this is a validation scan (from Google Wallet with ?k= parameter)
+  const totpCode = req.query.k;
+  let validationResult = null;
+  
+  if (totpCode && record && record.totp_secret) {
+    const totpValid = verifyTOTP(record.totp_secret, totpCode);
+    validationResult = {
+      isValid: totpValid,
+      title: totpValid ? "✓ VÁLIDO" : "✗ NÃO VÁLIDO",
+      subtitle: totpValid ? "Cartão de sócio ativo" : "Código de segurança expirado",
+      color: totpValid ? "#4CAF50" : "#f44336"
+    };
+  }
+
   const currentTOTP = record.totp_secret ? generateTOTP(record.totp_secret) : '';
   
   const validationUrlWithTOTP = `${record.qr_validation_url}?code=${currentTOTP}`;
   
   const qrDataUrl = await QRCode.toDataURL(validationUrlWithTOTP);
   const logoUrl = process.env.OSC_LOGO_URL || "";
+
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.send(`
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cartão de Sócio - ${escapeHtml(record.full_name)}</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: #000;
+      color: #fff;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    
+    .validation-banner {
+      width: 100%;
+      max-width: 500px;
+      padding: 24px;
+      border-radius: 16px;
+      text-align: center;
+      margin-bottom: 30px;
+      animation: slideIn 0.3s ease-out;
+    }
+    
+    @keyframes slideIn {
+      from {
+        opacity: 0;
+        transform: translateY(-20px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+    
+    .validation-title {
+      font-size: 48px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+    
+    .validation-subtitle {
+      font-size: 18px;
+      opacity: 0.9;
+    }
+    
+    .logo {
+      max-width: 150px;
+      height: auto;
+      margin-bottom: 30px;
+    }
+    
+    .member-name {
+      font-size: 32px;
+      font-weight: 700;
+      text-align: center;
+      margin-bottom: 8px;
+    }
+    
+    .member-subtitle {
+      font-size: 16px;
+      color: #999;
+      text-align: center;
+      margin-bottom: 30px;
+    }
+    
+    .wallet-buttons {
+      display: flex;
+      gap: 16px;
+      justify-content: center;
+      margin-bottom: 40px;
+      flex-wrap: wrap;
+    }
+    
+    .wallet-buttons a {
+      display: block;
+      transition: opacity 0.2s;
+    }
+    
+    .wallet-buttons a:hover {
+      opacity: 0.8;
+    }
+    
+    .wallet-buttons img {
+      height: 50px;
+      width: auto;
+    }
+    
+    .member-details {
+      background: #1a1a1a;
+      border-radius: 12px;
+      padding: 24px;
+      max-width: 400px;
+      width: 100%;
+      margin-bottom: 30px;
+    }
+    
+    .detail-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 12px 0;
+      border-bottom: 1px solid #333;
+    }
+    
+    .detail-row:last-child {
+      border-bottom: none;
+    }
+    
+    .detail-label {
+      color: #999;
+      font-size: 14px;
+    }
+    
+    .detail-value {
+      font-weight: 600;
+      font-size: 14px;
+    }
+    
+    .qr-section {
+      text-align: center;
+    }
+    
+    .qr-section img {
+      width: 200px;
+      height: 200px;
+      border-radius: 12px;
+    }
+    
+    .footer-note {
+      color: #666;
+      font-size: 13px;
+      text-align: center;
+      margin-top: 30px;
+      max-width: 400px;
+    }
+  </style>
+</head>
+<body>
+  ${validationResult ? `
+    <div class="validation-banner" style="background: ${validationResult.color};">
+      <div class="validation-title">${validationResult.title}</div>
+      <div class="validation-subtitle">${validationResult.subtitle}</div>
+    </div>
+  ` : ''}
+  
+  ${logoUrl ? `<img class="logo" src="${escapeHtml(logoUrl)}" alt="Odivelas Sports Club" />` : ''}
+  
+  <h1 class="member-name">${escapeHtml(record.full_name)}</h1>
+  <p class="member-subtitle">Cartão de Sócio</p>
+  
+  ${!validationResult ? `
+    <div class="wallet-buttons">
+      ${record.google_wallet_url ? `
+        <a href="${escapeHtml(record.google_wallet_url)}">
+          <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/b/bb/Add_to_Google_Wallet_badge.svg/1280px-Add_to_Google_Wallet_badge.svg.png" alt="Add to Google Wallet" />
+        </a>
+      ` : ''}
+      ${record.apple_pkpass_url ? `
+        <a href="${escapeHtml(record.apple_pkpass_url)}">
+          <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/3/30/Add_to_Apple_Wallet_badge.svg/1280px-Add_to_Apple_Wallet_badge.svg.png" alt="Add to Apple Wallet" />
+        </a>
+      ` : ''}
+    </div>
+  ` : ''}
+  
+  <div class="member-details">
+    <div class="detail-row">
+      <span class="detail-label">Nº Sócio</span>
+      <span class="detail-value">${escapeHtml(record.member_number)}</span>
+    </div>
+    <div class="detail-row">
+      <span class="detail-label">Tipo</span>
+      <span class="detail-value">${escapeHtml(record.member_type || 'Sócio')}</span>
+    </div>
+    <div class="detail-row">
+      <span class="detail-label">Válido até</span>
+      <span class="detail-value">${escapeHtml(record.valid_until || '—')}</span>
+    </div>
+    <div class="detail-row">
+      <span class="detail-label">Estado</span>
+      <span class="detail-value">${record.status === 'active' ? 'ATIVO' : 'INATIVO'}</span>
+    </div>
+  </div>
+  
+  ${!validationResult ? `
+    <div class="qr-section">
+      <img id="qrCode" src="${qrDataUrl}" alt="QR Code de Validação" />
+      <p style="color: #999; font-size: 12px; margin-top: 8px;">
+        Código renova a cada 10 segundos
+      </p>
+    </div>
+    
+    <p class="footer-note">
+      Adicione este cartão à sua carteira digital para acesso rápido e validação em eventos do clube.
+    </p>
+    
+    <script>
+      setInterval(async () => {
+        try {
+          const response = await fetch('/c/${record.token}/qr');
+          const data = await response.json();
+          document.getElementById('qrCode').src = data.qrDataUrl;
+        } catch (error) {
+          console.error('Failed to refresh QR code:', error);
+        }
+      }, 10000); // Refresh every 10 seconds
+    </script>
+  ` : `
+    <p class="footer-note" style="color: #fff;">
+      ${validationResult.isValid ? 'Acesso autorizado ao clube' : 'Reescaneie o QR do cartão para validar'}
+    </p>
+  `}
+</body>
+</html>
+  `);
+});
 
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.send(`
