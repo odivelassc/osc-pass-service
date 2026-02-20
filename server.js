@@ -196,6 +196,7 @@ async function upsertGenericObject({ issuerId, classSuffix, objectSuffix, record
         },
         body: JSON.stringify({
           id: classId,
+          viewUnlockRequirement: "UNLOCK_REQUIRED_TO_VIEW",  // Required for rotating barcode security
           classTemplateInfo: {
             cardTemplateOverride: {
               cardRowTemplateInfos: [
@@ -257,16 +258,23 @@ async function upsertGenericObject({ issuerId, classSuffix, objectSuffix, record
       defaultValue: { language: "pt-PT", value: "Membro" } 
     },
     hexBackgroundColor: "#000000",
+    // Static barcode fallback (always renders even if rotating fails)
+    barcode: {
+      type: "QR_CODE",
+      value: `${baseUrl}/v/${record.token}`,
+      alternateText: " "
+    },
+    // Rotating barcode with TOTP (more secure)
     rotatingBarcode: {
       type: "QR_CODE",
-      valuePattern: `${baseUrl}/c/${record.token}?k={totp_value_0}`,
+      valuePattern: `${baseUrl}/v/${record.token}?code={totp_value_0}`,
       alternateText: " ",
       totpDetails: {
-        periodMillis: 10000,
+        periodMillis: "10000",  // MUST be string per Google Wallet API spec
         algorithm: "TOTP_SHA1",
         parameters: [
           {
-            key: hexSecret,
+            key: hexSecret,  // Base16 (hex) format as required
             valueLength: 8
           }
         ]
@@ -510,13 +518,47 @@ app.delete("/api/passes/:member_id", async (req, res) => {
       return res.status(404).json({ error: "Pass not found" });
     }
     
-    // Delete from database
+    // Expire the Google Wallet object (Google doesn't support true DELETE)
+    let googleExpired = false;
+    try {
+      const accessToken = await getGoogleAccessToken();
+      const issuerId = process.env.GOOGLE_ISSUER_ID;
+      const objectId = `${issuerId}.${pass.token}`;
+      const classId = `${issuerId}.MembershipCardV2`;
+      
+      const expireRes = await fetch(
+        `https://walletobjects.googleapis.com/walletobjects/v1/genericObject/${objectId}`,
+        {
+          method: "PUT",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            id: objectId,
+            classId: classId,
+            state: "EXPIRED"
+          })
+        }
+      );
+      
+      googleExpired = expireRes.ok;
+      if (!googleExpired) {
+        console.warn(`Warning: Failed to expire Google Wallet object ${objectId}:`, await expireRes.text());
+      }
+    } catch (googleError) {
+      console.warn('Warning: Failed to expire Google Wallet object:', googleError.message);
+      // Continue with local deletion even if Google API fails
+    }
+    
+    // Delete from local database
     await pool.query('DELETE FROM passes WHERE member_id = $1', [member_id]);
     
     res.json({ 
       success: true, 
       message: "Pass deleted successfully",
-      deleted_token: pass.token 
+      deleted_token: pass.token,
+      google_wallet_expired: googleExpired
     });
   } catch (error) {
     console.error('Error deleting pass:', error);
