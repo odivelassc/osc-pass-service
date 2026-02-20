@@ -259,7 +259,7 @@ async function upsertGenericObject({ issuerId, classSuffix, objectSuffix, record
     hexBackgroundColor: "#000000",
     rotatingBarcode: {
       type: "QR_CODE",
-      valuePattern: `${baseUrl}/v/${record.token}?code={totp_value_0}`,
+      valuePattern: `${baseUrl}/c/${record.token}?k={totp_value_0}`,
       alternateText: " ",
       totpDetails: {
         periodMillis: 10000,
