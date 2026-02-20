@@ -60,7 +60,7 @@ function generateTOTP(hexSecret, timeStep = 10, digits = 8) {
   return String(code).padStart(digits, '0');
 }
 
-function verifyTOTP(hexSecret, token, window = 1) {
+function verifyTOTP(hexSecret, token, window = 3) {  // Increased window for better tolerance
   const timeStep = 10; // 10 seconds
   const digits = 8;
   
@@ -239,8 +239,8 @@ async function upsertGenericObject({ issuerId, classSuffix, objectSuffix, record
 
   const existingData = checkRes.ok ? await checkRes.json() : null;
 
-  // Generate HEX secret for this member
-  const hexSecret = generateHexSecret(record.member_id);
+  // Use the TOTP secret stored in database (don't regenerate!)
+  const hexSecret = record.totp_secret;
   const baseUrl = process.env.PUBLIC_BASE_URL || "https://card.odivelassc.pt";
 
   const objectPayload = {
@@ -258,13 +258,7 @@ async function upsertGenericObject({ issuerId, classSuffix, objectSuffix, record
       defaultValue: { language: "pt-PT", value: "Membro" } 
     },
     hexBackgroundColor: "#000000",
-    // Static barcode fallback (always renders even if rotating fails)
-    barcode: {
-      type: "QR_CODE",
-      value: `${baseUrl}/v/${record.token}`,
-      alternateText: " "
-    },
-    // Rotating barcode with TOTP (more secure)
+    // Rotating barcode with TOTP (changes every 10 seconds)
     rotatingBarcode: {
       type: "QR_CODE",
       valuePattern: `${baseUrl}/v/${record.token}?code={totp_value_0}`,
